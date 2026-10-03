@@ -52,11 +52,19 @@ input,select,textarea{width:100%;font-size:16px;padding:10px;border:1px solid va
 .hint{font-size:12px;color:var(--m);margin-top:3px}
 .print-only{display:none}
 @media print{header,nav,.bar,.noprint,.sheet-bg,button,.btn{display:none!important}body{background:#fff;padding:0}.card{border:0;padding:0}.print-only{display:block}main{max-width:none}}
+.auth{position:fixed;inset:0;background:var(--bg);z-index:50;display:flex;align-items:flex-start;justify-content:center;padding:24px 14px;overflow:auto}
+.auth .card{max-width:420px;width:100%}
+.auth h2{font-size:20px;color:var(--t);margin:0 0 6px}
+.err{color:var(--r);font-size:13px;min-height:18px;margin-top:8px}
+.sync{font-size:11px;opacity:.85;margin-left:6px}
 </style>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
 </head>
 <body>
 <header class="noprint">
-<h1>Srinivas Services - Apartment Accounts</h1>
+<h1>Srinivas Services - Apartment Accounts<span class="sync" id="syncSt"></span></h1>
 <div class="row"><select id="aptSel" aria-label="Apartment"></select><input type="month" id="monthSel" aria-label="Month"></div>
 </header>
 <main id="main"></main>
@@ -68,6 +76,7 @@ input,select,textarea{width:100%;font-size:16px;padding:10px;border:1px solid va
 <button data-tab="more"><b>&#9881;</b>More</button>
 </nav>
 <div id="sheetRoot"></div>
+<div id="authRoot"></div>
 <script>
 'use strict';
 var KEY='srinivas-apt-accounts-v1';
@@ -86,16 +95,33 @@ function fmtDate(d){if(!d)return '';var p=d.split('-');return +p[2]+' '+MN[+p[1]
 function natCmp(a,b){return String(a).localeCompare(String(b),undefined,{numeric:true,sensitivity:'base'})}
 
 /* ---------- calculations (pure) ---------- */
+function monthAt(i){return Math.floor(i/12)+'-'+String(i%12+1).padStart(2,'0')}
+function rateFor(f,m){
+  var r=f.rates;if(!r||!r.length)return num(f.amount);
+  var best=null;for(var i=0;i<r.length;i++){if(r[i].from<=m&&(!best||r[i].from>=best.from))best=r[i]}
+  if(!best){best=r[0];for(var j=1;j<r.length;j++)if(r[j].from<best.from)best=r[j]}
+  return num(best.amount);
+}
+function setRate(f,from,amount){
+  var r=(f.rates||[]).filter(function(x){return x.from!==from});
+  r.push({from:from,amount:num(amount)});r.sort(function(a,b){return a.from<b.from?-1:a.from>b.from?1:0});
+  f.rates=r;f.amount=r[r.length-1].amount;
+}
+function normFlat(f,startMonth){
+  if(!f.rates||!f.rates.length){f.rates=[{from:startMonth||'2000-01',amount:num(f.amount)}]}
+  f.amount=rateFor(f,'9999-12');return f;
+}
 function calc(apt,month){
   var st=apt.startMonth||month, mi=mIdx(month), si=mIdx(st);
-  var before=Math.max(0,mi-si), billedNow=mi>=si?1:0;
+  var billedNow=mi>=si?1:0;
   var rows=(apt.flats||[]).map(function(f){
-    var amt=num(f.amount),paidB=0,paidN=0;
+    var amt=rateFor(f,month),paidB=0,paidN=0,dueB=0;
+    for(var k=si;k<mi;k++)dueB+=rateFor(f,monthAt(k));
     (apt.payments||[]).forEach(function(p){
       if(p.flatId!==f.id)return;var pm=(p.date||'').slice(0,7);
       if(mIdx(pm)<mi)paidB+=num(p.amount);else if(pm===month)paidN+=num(p.amount);
     });
-    var openP=num(f.opening)+amt*before-paidB;
+    var openP=num(f.opening)+dueB-paidB;
     var billed=amt*billedNow;
     return {flat:f,openP:openP,billed:billed,paid:paidN,pending:openP+billed-paidN};
   }).sort(function(a,b){return natCmp(a.flat.no,b.flat.no)});
@@ -119,15 +145,153 @@ function calc(apt,month){
     cashOpen:cashB,bankOpen:bankB,cashClose:cashB+cashN,bankClose:bankB+bankN,beforeStart:mi<si};
 }
 
-/* ---------- storage ---------- */
-var db=load(), ui={apt:null,month:curMonth(),tab:'sum'};
-function load(){
-  try{var d=JSON.parse(localStorage.getItem(KEY));if(d&&d.apartments)return d}catch(e){}
-  return {v:1,apartments:[],lastBackup:null};
-}
-function save(){try{localStorage.setItem(KEY,JSON.stringify(db))}catch(e){alert('Could not save. Browser storage may be full or blocked.')}}
+/* ---------- storage: Firebase Auth + Firestore ---------- */
+var FB_CONFIG={apiKey:"AIzaSyDfDjB_Dxz30-RjSHHkSrEXwpkvq0cgsqA",authDomain:"apartment-accounts.firebaseapp.com",projectId:"apartment-accounts",storageBucket:"apartment-accounts.firebasestorage.app",messagingSenderId:"677066670634",appId:"1:677066670634:web:827b91c79cddba453d7953"};
+var db={v:2,apartments:[],lastBackup:null}, ui={apt:null,month:curMonth(),tab:'sum',rep:null};
+try{db.lastBackup=localStorage.getItem('apt-last-backup')||null}catch(e){}
+var fb={email:null,store:{},ready:false,aptUnsub:null,subUnsubs:{},shadow:{},aptLoaded:false,fs:null,auth:null};
+var META=['name','startMonth','openCash','openBank','ownerEmails','memberEmails'];
 function apt(){return db.apartments.filter(function(a){return a.id===ui.apt})[0]}
 function flatOf(a,id){return a.flats.filter(function(f){return f.id===id})[0]}
+function isOwner(a){return !!a&&(a.ownerEmails||[]).indexOf(fb.email)>=0}
+function stable(o){return JSON.stringify(o,function(k,v){if(v&&typeof v==='object'&&!Array.isArray(v)){var r={};Object.keys(v).sort().forEach(function(x){r[x]=v[x]});return r}return v})}
+function clean(o,skip){var r={};Object.keys(o).forEach(function(k){if(k==='id'||skip.indexOf(k)>=0||o[k]===undefined)return;r[k]=o[k]});return r}
+function flatten(){
+  var m={};
+  db.apartments.forEach(function(a){
+    var meta={};META.forEach(function(k){if(a[k]!==undefined)meta[k]=a[k]});
+    m['apartments/'+a.id]=meta;
+    ['flats','payments','expenses'].forEach(function(c){(a[c]||[]).forEach(function(x){m['apartments/'+a.id+'/'+c+'/'+x.id]=clean(x,[])})});
+  });
+  return m;
+}
+function setSync(t){var e=document.getElementById('syncSt');if(e)e.textContent=t}
+var saveTimer=null;
+function save(){
+  if(!fb.ready){alert('Still loading your data. Wait a moment and try again.');return}
+  var now=flatten(),ops=[],k;
+  for(k in now){var js=stable(now[k]);if(fb.shadow[k]!==js)ops.push({t:'set',path:k,data:now[k]})}
+  for(k in fb.shadow){if(!(k in now))ops.push({t:'del',path:k})}
+  if(!ops.length)return;
+  var apSet=[],ch=[],apDel=[];
+  ops.forEach(function(o){var isApt=o.path.split('/').length===2;
+    if(o.t==='set'&&isApt)apSet.push(o);else if(o.t==='del'&&isApt)apDel.push(o);else ch.push(o);
+    var pp=o.path.split('/'),aid=pp[1];
+    if(o.t==='set'){fb.shadow[o.path]=stable(o.data);
+      if(isApt){if(!fb.store[aid])fb.store[aid]={meta:o.data,flats:{},payments:{},expenses:{},loaded:{flats:true,payments:true,expenses:true}};else fb.store[aid].meta=o.data}
+      else if(fb.store[aid])fb.store[aid][pp[2]][pp[3]]=o.data}
+    else{delete fb.shadow[o.path];
+      if(!isApt&&fb.store[aid])delete fb.store[aid][pp[2]][pp[3]]}});
+  apDel.forEach(function(o){var aid=o.path.split('/')[1];(fb.subUnsubs[aid]||[]).forEach(function(u){u()});delete fb.subUnsubs[aid];delete fb.store[aid]});
+  var batches=[];
+  [apSet,ch,apDel].forEach(function(g){for(var i=0;i<g.length;i+=400)batches.push(g.slice(i,i+400))});
+  setSync('saving...');
+  var chain=Promise.resolve();
+  batches.forEach(function(g){
+    chain=chain.then(function(){
+      var b=fb.fs.batch();
+      g.forEach(function(o){var r=fb.fs.doc(o.path);if(o.t==='set')b.set(r,o.data);else b.delete(r)});
+      return b.commit();
+    });
+  });
+  chain.then(function(){setSync('saved')}).catch(function(e){
+    setSync('NOT saved');
+    alert('Could not save to the online database: '+(e&&e.code==='permission-denied'?'you do not have permission for this change.':(e&&e.message)||'network problem')+' The screen will refresh to the saved data.');
+    resync();
+  });
+}
+function resync(){var em=fb.email;stopDataKeep();startData(em)}
+function stopDataKeep(){if(fb.aptUnsub)fb.aptUnsub();Object.keys(fb.subUnsubs).forEach(function(id){fb.subUnsubs[id].forEach(function(u){u()})});fb.aptUnsub=null;fb.subUnsubs={};fb.store={};fb.shadow={};fb.ready=false;fb.aptLoaded=false}
+function toObj(id,data){var o={id:id};Object.keys(data).forEach(function(k){o[k]=data[k]});return o}
+function reconcile(list,map,starter){
+  var byId={};list.forEach(function(x){byId[x.id]=x});
+  var out=[];Object.keys(map).forEach(function(id){
+    var cur=byId[id],d=map[id];
+    if(cur){Object.keys(cur).forEach(function(k){if(k!=='id')delete cur[k]});Object.keys(d).forEach(function(k){cur[k]=d[k]});out.push(cur)}
+    else out.push(toObj(id,d));
+  });
+  return out;
+}
+function rebuild(){
+  var ids=Object.keys(fb.store),byId={};db.apartments.forEach(function(a){byId[a.id]=a});
+  var apts=ids.map(function(id){
+    var st=fb.store[id],a=byId[id]||{id:id};
+    META.forEach(function(k){delete a[k]});Object.keys(st.meta).forEach(function(k){a[k]=st.meta[k]});
+    ['flats','payments','expenses'].forEach(function(c){a[c]=reconcile(a[c]||[],st[c])});
+    a.flats.forEach(function(f){normFlat(f,a.startMonth)});
+    return a;
+  });
+  apts.sort(function(x,y){return natCmp(x.name,y.name)});
+  db.apartments=apts;
+  var all=true;ids.forEach(function(id){var l=fb.store[id].loaded;if(!(l.flats&&l.payments&&l.expenses))all=false});
+  fb.ready=fb.aptLoaded&&all;
+  if(fb.ready)fb.shadow=(function(){var m=flatten(),r={};for(var k in m)r[k]=stable(m[k]);return r})();
+  if(!apt()&&db.apartments.length)ui.apt=db.apartments[0].id;
+  if(fb.ready){setSync('online')}else setSync('loading...');
+  render();
+}
+function listenApt(id){
+  if(fb.subUnsubs[id])return;
+  var us=[];
+  ['flats','payments','expenses'].forEach(function(c){
+    us.push(fb.fs.collection('apartments/'+id+'/'+c).onSnapshot(function(snap){
+      var st=fb.store[id];if(!st)return;var m={};snap.forEach(function(d){m[d.id]=d.data()});st[c]=m;st.loaded[c]=true;rebuild();
+    },function(e){setSync('error')}));
+  });
+  fb.subUnsubs[id]=us;
+}
+function startData(email){
+  fb.email=email;
+  setSync('loading...');
+  fb.aptUnsub=fb.fs.collection('apartments').where('memberEmails','array-contains',email).onSnapshot(function(snap){
+    snap.docChanges().forEach(function(ch){var d=ch.doc,st=fb.store[d.id];
+      if(ch.type==='removed'){(fb.subUnsubs[d.id]||[]).forEach(function(u){u()});delete fb.subUnsubs[d.id];delete fb.store[d.id];return}
+      if(!st){fb.store[d.id]={meta:d.data(),flats:{},payments:{},expenses:{},loaded:{}}}else st.meta=d.data();
+      listenApt(d.id)});
+    fb.aptLoaded=true;rebuild();
+  },function(e){setSync('error');alert('Could not load data: '+e.message)});
+}
+function stopData(){
+  if(fb.aptUnsub)fb.aptUnsub();Object.keys(fb.subUnsubs).forEach(function(id){fb.subUnsubs[id].forEach(function(u){u()})});
+  fb.aptUnsub=null;fb.subUnsubs={};fb.store={};fb.shadow={};fb.ready=false;fb.aptLoaded=false;fb.email=null;db.apartments=[];ui.apt=null;
+}
+
+/* ---------- login screens ---------- */
+function authScreen(html){document.getElementById('authRoot').innerHTML='<div class="auth"><div class="card">'+html+'</div></div>'}
+function hideAuth(){document.getElementById('authRoot').innerHTML=''}
+function authErr(e){var m={'auth/invalid-credential':'Wrong email or password.','auth/wrong-password':'Wrong email or password.','auth/user-not-found':'No account with this email. Tap Create account.','auth/email-already-in-use':'This email already has an account. Tap Sign in.','auth/weak-password':'Password must be at least 6 characters.','auth/invalid-email':'Enter a valid email.','auth/popup-closed-by-user':'Sign-in was cancelled.','auth/too-many-requests':'Too many tries. Wait a few minutes.','auth/network-request-failed':'No internet connection.'};return m[e&&e.code]||((e&&e.message)||'Something went wrong.')}
+function showLogin(msg){
+  authScreen('<h2>Apartment Accounts</h2><p class="hint">Sign in with your email and password. New here? Type your email and a password, then tap Create account. We will email you a link to verify it.</p>'+
+   '<form id="loginForm"><label>Email</label><input name="email" type="email" autocomplete="username" required>'+
+   '<label>Password</label><input name="password" type="password" autocomplete="current-password" required minlength="6">'+
+   '<div class="bar" style="margin-top:12px"><button class="btn" type="submit" style="flex:1">Sign in</button><button class="btn sec" type="button" id="mkBtn">Create account</button></div>'+
+   '<p class="hint"><a href="#" id="fpBtn">Forgot password?</a></p></form><div class="err" id="authErr">'+esc(msg||'')+'</div>');
+  var err=function(e){document.getElementById('authErr').textContent=authErr(e)};
+  var f=document.getElementById('loginForm');
+  f.onsubmit=function(ev){ev.preventDefault();fb.auth.signInWithEmailAndPassword(f.email.value.trim(),f.password.value).catch(err)};
+  document.getElementById('mkBtn').onclick=function(){
+    if(!f.reportValidity())return;
+    fb.auth.createUserWithEmailAndPassword(f.email.value.trim(),f.password.value).then(function(c){return c.user.sendEmailVerification()}).catch(err)};
+  document.getElementById('fpBtn').onclick=function(ev){ev.preventDefault();var em=f.email.value.trim();if(!em){document.getElementById('authErr').textContent='Type your email above first.';return}
+    fb.auth.sendPasswordResetEmail(em).then(function(){document.getElementById('authErr').style.color='var(--g)';document.getElementById('authErr').textContent='Password reset link sent to '+em+'.'}).catch(err)};
+}
+function showVerify(u){
+  authScreen('<h2>Verify your email</h2><p>We sent a link to <b>'+esc(u.email)+'</b>. Open your email, tap the link, then come back here and tap the button below. Check spam if you do not see it.</p>'+
+   '<div class="bar"><button class="btn" id="vDone">I have verified</button><button class="btn sec" id="vRe">Resend email</button><button class="btn sec" id="vOut">Sign out</button></div><div class="err" id="authErr"></div>');
+  document.getElementById('vDone').onclick=function(){u.reload().then(function(){if(u.emailVerified){return u.getIdToken(true).then(function(){hideAuth();startData(u.email.toLowerCase())})}else document.getElementById('authErr').textContent='Not verified yet. Tap the link in the email first.'})};
+  document.getElementById('vRe').onclick=function(){u.sendEmailVerification().then(function(){document.getElementById('authErr').style.color='var(--g)';document.getElementById('authErr').textContent='Sent again.'}).catch(function(e){document.getElementById('authErr').textContent=authErr(e)})};
+  document.getElementById('vOut').onclick=function(){fb.auth.signOut()};
+}
+function initFirebase(){
+  firebase.initializeApp(FB_CONFIG);fb.auth=firebase.auth();fb.fs=firebase.firestore();
+  authScreen('<p class="hint">Loading...</p>');
+  fb.auth.onAuthStateChanged(function(u){
+    stopData();render();
+    if(!u){showLogin();return}
+    if(!u.emailVerified){showVerify(u);return}
+    hideAuth();startData(u.email.toLowerCase());
+  });
+}
 
 /* ---------- ui helpers ---------- */
 var $=function(s){return document.querySelector(s)};
@@ -164,21 +328,21 @@ function render(){
     sel.innerHTML=db.apartments.map(function(a){return '<option value="'+a.id+'"'+(a.id===ui.apt?' selected':'')+'>'+esc(a.name)+'</option>'}).join('');
   }
   $('#monthSel').value=ui.month;
-  document.querySelectorAll('#nav button').forEach(function(b){b.classList.toggle('on',b.dataset.tab===ui.tab)});
+  document.querySelectorAll('#nav button').forEach(function(b){b.classList.toggle('on',b.dataset.tab===ui.tab||(ui.tab==='rep'&&b.dataset.tab==='more'))});
   var m=$('#main');
   if(!apt()&&ui.tab!=='more'){m.innerHTML=welcome();return}
-  m.innerHTML=({sum:vSum,pay:vPay,exp:vExp,flat:vFlat,more:vMore})[ui.tab]();
+  m.innerHTML=({sum:vSum,pay:vPay,exp:vExp,flat:vFlat,more:vMore,rep:vRep})[ui.tab]();
 }
 function welcome(){
   return '<div class="card"><h2>Welcome</h2><p>Add your first apartment to start. You can add more apartments later and switch from the top.</p>'+
   '<button class="btn" data-act="addApt">+ Add apartment</button></div>'+
-  '<div class="card"><h2>Already have a backup?</h2><button class="btn sec" data-act="import">Restore from backup file</button></div>';
+  '<div class="card"><h2>Have a backup file from the old version?</h2><button class="btn sec" data-act="import">Import backup file</button></div>';
 }
 function backupWarn(){
   if(!db.apartments.length)return '';
   var last=db.lastBackup?new Date(db.lastBackup):null,days=last?(Date.now()-last)/864e5:999;
-  if(days<7)return '';
-  return '<div class="warn noprint">Data is saved only in this browser. '+(last?'Last backup '+Math.floor(days)+' days ago.':'No backup yet.')+' <a href="#" data-act="export">Download backup</a></div>';
+  if(days<30)return '';
+  return '<div class="warn noprint">Your data is safe online. As an extra copy, '+(last?'last file backup was '+Math.floor(days)+' days ago.':'you have not downloaded a file backup yet.')+' <a href="#" data-act="export">Download backup</a></div>';
 }
 function vSum(){
   var a=apt(),c=calc(a,ui.month),t=c.t,h=backupWarn();
@@ -236,16 +400,75 @@ function vFlat(){
   h+='<div class="card"><h2>'+a.flats.length+' flats - '+esc(a.name)+'</h2>';
   if(!c.rows.length)h+='<div class="empty">No flats yet. Use "Add many" to create all at once.</div>';
   c.rows.forEach(function(r){var f=r.flat,p=r.pending;
-    h+='<div class="item" data-act="editFlat" data-id="'+f.id+'"><div><b>Flat '+esc(f.no)+'</b> '+esc(f.owner||'')+(f.kind==='tenant'?' <span class="tag a">Tenant</span>':'')+'<small>'+esc(f.phone||'no phone')+'</small></div><div class="amt">'+inr(num(f.amount))+'/mo<br><span class="tag '+(p>0?'r':'')+'">'+(p>0?'Pending '+inr(p):p<0?'Advance '+inr(-p):'Clear')+'</span></div></div>'});
+    h+='<div class="item" data-act="editFlat" data-id="'+f.id+'"><div><b>Flat '+esc(f.no)+'</b> '+esc(f.owner||'')+(f.kind==='tenant'?' <span class="tag a">Tenant</span>':'')+'<small>'+esc(f.phone||'no phone')+'</small></div><div class="amt">'+inr(rateFor(f,ui.month))+'/mo<br><span class="tag '+(p>0?'r':'')+'">'+(p>0?'Pending '+inr(p):p<0?'Advance '+inr(-p):'Clear')+'</span></div></div>'});
   return h+'</div>';
 }
 function vMore(){
   var a=apt(),h='';
-  if(a)h+='<div class="card"><h2>'+esc(a.name)+'</h2><p class="hint">Starts '+fmtMonth(a.startMonth)+' &middot; opening cash '+inr(num(a.openCash))+' &middot; opening bank '+inr(num(a.openBank))+'</p><button class="btn sec" data-act="editApt">Edit apartment / opening balances</button></div>';
-  h+='<div class="card"><h2>Apartments</h2><button class="btn" data-act="addApt">+ Add apartment</button></div>';
-  h+='<div class="card"><h2>Backup</h2><p class="hint">All data is stored only in this browser on this device. Download a backup regularly and keep it safe (e.g. WhatsApp it to yourself). Restore it on any device.'+(db.lastBackup?' Last backup: '+new Date(db.lastBackup).toLocaleString('en-IN'):' No backup yet.')+'</p>'+
-   '<div class="bar"><button class="btn" data-act="export">Download backup</button><button class="btn sec" data-act="import">Restore backup</button></div></div>';
-  h+='<div class="card"><h2>How to use</h2><ol style="padding-left:18px;margin:0"><li>Add apartment, then its flats (Add many).</li><li>Record every payment and expense as it happens.</li><li>Pick the month on top; Summary shows collected, pending, defaulters and balances.</li><li>Download a backup weekly.</li></ol><p class="hint">Pending carries forward automatically month to month.</p></div>';
+  if(a){h+='<div class="card"><h2>'+esc(a.name)+'</h2><p class="hint">Starts '+fmtMonth(a.startMonth)+' &middot; opening cash '+inr(num(a.openCash))+' &middot; opening bank '+inr(num(a.openBank))+'</p><div class="bar">'+
+   '<button class="btn" data-act="report">Yearly report (print / PDF / Excel)</button>'+(isOwner(a)?'<button class="btn sec" data-act="editApt">Edit apartment / opening balances</button>':'')+'</div></div>';
+   h+='<div class="card"><h2>Who can use '+esc(a.name)+'</h2>';
+   (a.memberEmails||[]).forEach(function(e){var own=(a.ownerEmails||[]).indexOf(e)>=0;
+     h+='<div class="item"><div>'+esc(e)+'<small>'+(own?'Owner (can change everything)':'Editor (payments, expenses, flats)')+(e===fb.email?' &middot; you':'')+'</small></div>'+(isOwner(a)&&e!==fb.email?'<div><button class="btn sm sec" data-act="rmMember" data-email="'+esc(e)+'">Remove</button></div>':'')+'</div>'});
+   if(isOwner(a))h+='<div class="bar" style="margin-top:10px"><button class="btn sec" data-act="addMember">+ Give access to someone</button></div><p class="hint">They sign in with this same email (Google or email + password) and see only this apartment.</p>';
+   h+='</div>'}
+  if(allowedCreate())h+='<div class="card"><h2>Apartments</h2><button class="btn" data-act="addApt">+ Add apartment</button></div>';
+  h+='<div class="card"><h2>Backup</h2><p class="hint">Everything is saved online and opens on any device after you sign in. You can also keep a file copy.'+(db.lastBackup?' Last file backup: '+new Date(db.lastBackup).toLocaleString('en-IN'):'')+'</p>'+
+   '<div class="bar"><button class="btn" data-act="export">Download backup</button><button class="btn sec" data-act="import">Import backup file</button></div></div>';
+  h+='<div class="card"><h2>Account</h2><p class="hint">Signed in as '+esc(fb.email||'')+'</p><button class="btn sec" data-act="signout">Sign out</button></div>';
+  h+='<div class="card"><h2>How to use</h2><ol style="padding-left:18px;margin:0"><li>Add apartment, then its flats (Add many).</li><li>Record every payment and expense as it happens.</li><li>Pick the month on top; Summary shows collected, pending, defaulters and balances.</li><li>At year end: More > Yearly report > Print / PDF for the CA.</li></ol><p class="hint">Pending carries forward automatically. A new maintenance rate applies only from the month you choose; earlier months stay as they were.</p></div>';
+  return h;
+}
+function allowedCreate(){return true}
+
+/* ---------- yearly report ---------- */
+function monthsBetween(from,to){var r=[];for(var i=mIdx(from);i<=mIdx(to);i++)r.push(monthAt(i));return r}
+function repPeriods(a){
+  var y0=+a.startMonth.slice(0,4),y1=+curMonth().slice(0,4)+1,out=[];
+  for(var y=y1;y>=y0-1;y--){
+    out.push({k:'fy'+y,label:'Financial year '+y+'-'+String(y+1).slice(2)+' (Apr '+y+' - Mar '+(y+1)+')',from:y+'-04',to:(y+1)+'-03'});
+    out.push({k:'cy'+y,label:'Calendar year '+y+' (Jan - Dec)',from:y+'-01',to:y+'-12'});
+  }
+  return out;
+}
+function repData(a,from,to){
+  var ms=monthsBetween(from,to),rows=[],tot={billed:0,paid:0,exp:0},flats={},cats={};
+  ms.forEach(function(m){var c=calc(a,m);rows.push({m:m,billed:c.t.billed,paid:c.t.paid,exp:c.exp,cash:c.cashClose,bank:c.bankClose,pend:c.t.pending,adv:c.t.advance});
+    tot.billed+=c.t.billed;tot.paid+=c.t.paid;tot.exp+=c.exp;
+    c.rows.forEach(function(r){var x=flats[r.flat.id]||(flats[r.flat.id]={flat:r.flat,billed:0,paid:0});x.billed+=r.billed;x.paid+=r.paid})});
+  var pays=a.payments.filter(function(p){var m=(p.date||'').slice(0,7);return m>=from&&m<=to}).sort(function(x,y){return (x.date||'').localeCompare(y.date||'')||natCmp(x.receipt,y.receipt)});
+  var exps=a.expenses.filter(function(e){var m=(e.date||'').slice(0,7);return m>=from&&m<=to}).sort(function(x,y){return (x.date||'').localeCompare(y.date||'')});
+  exps.forEach(function(e){cats[e.cat]=(cats[e.cat]||0)+num(e.amount)});
+  var first=calc(a,from),last=calc(a,to);
+  var fl=Object.keys(flats).map(function(k){var x=flats[k],r=last.rows.filter(function(q){return q.flat.id===k})[0];x.pending=r?r.pending:0;return x}).sort(function(x,y){return natCmp(x.flat.no,y.flat.no)});
+  return {ms:ms,rows:rows,tot:tot,pays:pays,exps:exps,cats:cats,flats:fl,first:first,last:last};
+}
+function vRep(){
+  var a=apt(),R=ui.rep;if(!a||!R){ui.tab='more';return vMore()}
+  var d=repData(a,R.from,R.to),paysTot=0,expTot=0;
+  var h='<div class="bar noprint"><button class="btn sec" data-act="repBack">&larr; Back</button><button class="btn" data-act="print">Print / save PDF</button><button class="btn sec" data-act="repCsv">Download Excel (CSV)</button></div>';
+  h+='<div class="card"><h2 style="font-size:18px;color:var(--t)">'+esc(a.name)+' - Accounts report</h2><p class="hint">'+esc(R.label)+' &middot; '+fmtMonth(R.from)+' to '+fmtMonth(R.to)+' &middot; prepared '+fmtDate(today())+'</p></div>';
+  h+='<div class="card"><h2>Summary</h2><table>'+
+   '<tr><td>Opening cash in hand</td><td class="n">'+inr(d.first.cashOpen)+'</td></tr><tr><td>Opening bank balance</td><td class="n">'+inr(d.first.bankOpen)+'</td></tr>'+
+   '<tr><td>Maintenance billed</td><td class="n">'+inr(d.tot.billed)+'</td></tr><tr><td>Maintenance collected</td><td class="n">'+inr(d.tot.paid)+'</td></tr>'+
+   '<tr><td>Total expenses</td><td class="n">'+inr(d.tot.exp)+'</td></tr>'+
+   '<tr><td><b>Closing cash in hand</b></td><td class="n"><b>'+inr(d.last.cashClose)+'</b></td></tr><tr><td><b>Closing bank balance</b></td><td class="n"><b>'+inr(d.last.bankClose)+'</b></td></tr>'+
+   '<tr><td>Total pending dues at end</td><td class="n">'+inr(d.last.t.pending)+'</td></tr>'+(d.last.t.advance?'<tr><td>Advance held at end</td><td class="n">'+inr(d.last.t.advance)+'</td></tr>':'')+'</table></div>';
+  h+='<div class="card"><h2>Month-wise</h2><table><tr><th>Month</th><th class="n">Billed</th><th class="n">Collected</th><th class="n">Expenses</th><th class="n">Cash end</th><th class="n">Bank end</th><th class="n">Pending</th></tr>';
+  d.rows.forEach(function(r){h+='<tr><td>'+fmtMonth(r.m)+'</td><td class="n">'+inr(r.billed)+'</td><td class="n">'+inr(r.paid)+'</td><td class="n">'+inr(r.exp)+'</td><td class="n">'+inr(r.cash)+'</td><td class="n">'+inr(r.bank)+'</td><td class="n">'+inr(r.pend)+'</td></tr>'});
+  h+='<tr><th>Total</th><th class="n">'+inr(d.tot.billed)+'</th><th class="n">'+inr(d.tot.paid)+'</th><th class="n">'+inr(d.tot.exp)+'</th><th></th><th></th><th></th></tr></table></div>';
+  h+='<div class="card"><h2>Expenses by category</h2><table>';
+  Object.keys(d.cats).sort().forEach(function(k){h+='<tr><td>'+esc(k)+'</td><td class="n">'+inr(d.cats[k])+'</td></tr>'});
+  h+='<tr><th>Total</th><th class="n">'+inr(d.tot.exp)+'</th></tr></table></div>';
+  h+='<div class="card"><h2>Flat-wise (this period)</h2><table><tr><th>Flat</th><th class="n">Billed</th><th class="n">Paid</th><th class="n">Pending at end</th></tr>';
+  d.flats.forEach(function(x){h+='<tr><td>'+esc(x.flat.no)+(x.flat.owner?' <small style="color:#667069">'+esc(x.flat.owner)+'</small>':'')+'</td><td class="n">'+inr(x.billed)+'</td><td class="n">'+inr(x.paid)+'</td><td class="n">'+inr(x.pending)+'</td></tr>'});
+  h+='</table></div>';
+  h+='<div class="card"><h2>All payments received ('+d.pays.length+')</h2><table><tr><th>Date</th><th>Flat</th><th>Mode</th><th>Receipt / ref</th><th class="n">Amount</th></tr>';
+  d.pays.forEach(function(p){var f=flatOf(a,p.flatId);paysTot+=num(p.amount);h+='<tr><td>'+fmtDate(p.date)+'</td><td>'+esc(f?f.no:'?')+'</td><td>'+MODES[p.mode]+'</td><td>'+esc([p.receipt,p.ref].filter(Boolean).join(' / '))+'</td><td class="n">'+inr(num(p.amount))+'</td></tr>'});
+  h+='<tr><th colspan="4">Total</th><th class="n">'+inr(paysTot)+'</th></tr></table></div>';
+  h+='<div class="card"><h2>All expenses ('+d.exps.length+')</h2><table><tr><th>Date</th><th>Category</th><th>Paid from</th><th>Note</th><th class="n">Amount</th></tr>';
+  d.exps.forEach(function(e){expTot+=num(e.amount);h+='<tr><td>'+fmtDate(e.date)+'</td><td>'+esc(e.cat)+'</td><td>'+(e.mode==='bank'?'Bank':'Cash')+'</td><td>'+esc(e.note||'')+'</td><td class="n">'+inr(num(e.amount))+'</td></tr>'});
+  h+='<tr><th colspan="4">Total</th><th class="n">'+inr(expTot)+'</th></tr></table></div>';
   return h;
 }
 
@@ -259,42 +482,70 @@ function aptForm(a){
    '<div class="hint">Opening balances are as of the start month. Dues begin from the start month; put older pending in each flat.</div>';
 }
 var acts={
-  addApt:function(){sheet('Add apartment',aptForm(),function(f){var a={id:uid(),name:f.name.trim(),startMonth:f.startMonth,openCash:num(f.openCash),openBank:num(f.openBank),flats:[],payments:[],expenses:[]};db.apartments.push(a);ui.apt=a.id;ui.month=a.startMonth>curMonth()?a.startMonth:curMonth();ui.tab='flat';save()})},
-  editApt:function(){var a=apt();sheet('Edit apartment',aptForm(a),function(f){a.name=f.name.trim();a.startMonth=f.startMonth;a.openCash=num(f.openCash);a.openBank=num(f.openBank);save()},{del:function(){db.apartments=db.apartments.filter(function(x){return x!==a});ui.apt=null;save()}})},
+  addApt:function(){sheet('Add apartment',aptForm(),function(f){var a={id:uid(),name:f.name.trim(),startMonth:f.startMonth,openCash:num(f.openCash),openBank:num(f.openBank),ownerEmails:[fb.email],memberEmails:[fb.email],flats:[],payments:[],expenses:[]};db.apartments.push(a);ui.apt=a.id;ui.month=a.startMonth>curMonth()?a.startMonth:curMonth();ui.tab='flat';save()})},
+  editApt:function(){var a=apt();sheet('Edit apartment',aptForm(a),function(f){a.name=f.name.trim();a.startMonth=f.startMonth;a.openCash=num(f.openCash);a.openBank=num(f.openBank);save()},{del:function(){if(!confirm('Delete the whole apartment with ALL its flats, payments and expenses from the online database? This cannot be undone.'))return;db.apartments=db.apartments.filter(function(x){return x!==a});ui.apt=null;save()}})},
   addFlat:function(){flatSheet()},
   editFlat:function(el){flatSheet(flatOf(apt(),el.dataset.id))},
   addMany:function(){
     var a=apt();sheet('Add many flats',field('count','How many flats',a.flats.length?'':32,'number','min="1" max="300" required')+field('prefix','Flat number prefix (optional)','','text','placeholder="e.g. A-"')+field('start','Start number',101,'number','required')+field('amount','Monthly maintenance per flat (\u20B9)',2000,'number','step="any" required')+'<div class="hint">Creates numbered flats, e.g. 101, 102, 103... You can rename any flat afterwards. Existing flat numbers are skipped.</div>',function(f){
       var n=Math.min(300,Math.max(1,parseInt(f.count,10)||0)),s=parseInt(f.start,10)||1,added=0;
-      for(var i=0;i<n;i++){var no=(f.prefix||'')+(s+i);if(a.flats.some(function(x){return x.no===no}))continue;a.flats.push({id:uid(),no:no,owner:'',phone:'',kind:'owner',amount:num(f.amount),opening:0});added++}
+      for(var i=0;i<n;i++){var no=(f.prefix||'')+(s+i);if(a.flats.some(function(x){return x.no===no}))continue;a.flats.push(normFlat({id:uid(),no:no,owner:'',phone:'',kind:'owner',amount:num(f.amount),opening:0},a.startMonth));added++}
       save();alert(added+' flats added.')})
   },
-  setAll:function(){var a=apt();sheet('Set amount for all flats',field('amount','Monthly maintenance (\u20B9)',a.flats[0]?a.flats[0].amount:2000,'number','step="any" required')+'<div class="hint">Changes the monthly amount of every flat. Past months are recalculated with the new amount, so use this only when rates change for the whole apartment.</div>',function(f){a.flats.forEach(function(x){x.amount=num(f.amount)});save()})},
+  setAll:function(){var a=apt();sheet('Set amount for all flats',field('amount','New monthly maintenance (\u20B9)',a.flats[0]?rateFor(a.flats[0],ui.month):2000,'number','step="any" required')+field('from','Applies from month',ui.month<a.startMonth?a.startMonth:ui.month,'month','required')+'<div class="hint">The new amount applies from this month onward. Earlier months keep the old amount, so past dues do not change.</div>',function(f){if(f.from<a.startMonth){alert('Pick a month on or after the start month ('+fmtMonth(a.startMonth)+').');return false}a.flats.forEach(function(x){setRate(x,f.from,f.amount)});save()})},
   addPay:function(){paySheet()},
   payFor:function(el){var a=apt(),r=calc(a,ui.month).rows.filter(function(r){return r.flat.id===el.dataset.id})[0];paySheet(null,el.dataset.id,r&&r.pending>0?r.pending:'')},
   editPay:function(el){paySheet(apt().payments.filter(function(p){return p.id===el.dataset.id})[0])},
   addExp:function(){expSheet()},
   editExp:function(el){expSheet(apt().expenses.filter(function(p){return p.id===el.dataset.id})[0])},
-  export:function(){db.lastBackup=new Date().toISOString();save();dl('apartment-accounts-backup-'+today()+'.json','application/json',JSON.stringify(db,null,1));render()},
+  export:function(){db.lastBackup=new Date().toISOString();try{localStorage.setItem('apt-last-backup',db.lastBackup)}catch(e){}dl('apartment-accounts-backup-'+today()+'.json','application/json',JSON.stringify({v:2,exportedAt:db.lastBackup,apartments:db.apartments},null,1));render()},
   import:function(){var i=document.createElement('input');i.type='file';i.accept='.json,application/json';i.onchange=function(){var fr=new FileReader();fr.onload=function(){
       try{var d=JSON.parse(fr.result);if(!d||!Array.isArray(d.apartments))throw 0;
-        d.apartments.forEach(function(a){a.flats=a.flats||[];a.payments=a.payments||[];a.expenses=a.expenses||[]});
-        if(confirm('Replace all current data with this backup ('+d.apartments.length+' apartments)?')){db=d;ui.apt=null;save();render()}
+        if(!confirm('Import '+d.apartments.length+' apartment(s) from this file into the online database? If an apartment already exists online, its flats, payments and expenses are replaced by the file.'))return;
+        d.apartments.forEach(function(x){
+          var ex=db.apartments.filter(function(y){return y.id===x.id})[0];
+          var n={id:x.id||uid(),name:x.name||'Apartment',startMonth:x.startMonth||curMonth(),openCash:num(x.openCash),openBank:num(x.openBank),
+            ownerEmails:ex?ex.ownerEmails:[fb.email],memberEmails:ex?ex.memberEmails:[fb.email],
+            flats:(x.flats||[]).map(function(f){return normFlat(f,x.startMonth)}),payments:x.payments||[],expenses:x.expenses||[]};
+          if(ex){db.apartments[db.apartments.indexOf(ex)]=n}else db.apartments.push(n);
+          ui.apt=n.id});
+        save();render();alert('Imported.')
       }catch(e){alert('This file is not a valid backup.')}};fr.readAsText(i.files[0])};i.click()},
+  signout:function(){if(confirm('Sign out?'))fb.auth.signOut()},
+  addMember:function(){var a=apt();sheet('Give access',field('email','Their email','', 'email','required placeholder="name@gmail.com"')+selectF('role','Access',[['editor','Editor - add payments, expenses, flats'],['owner','Owner - can also change apartment and access']],'editor')+'<div class="hint">They must sign in with exactly this email.</div>',function(f){
+      var e=f.email.trim().toLowerCase();if(a.memberEmails.indexOf(e)>=0){alert('Already has access.');return false}
+      a.memberEmails.push(e);if(f.role==='owner')a.ownerEmails.push(e);save()})},
+  rmMember:function(el){var a=apt(),e=el.dataset.email;if(!confirm('Remove access for '+e+'?'))return;
+      a.memberEmails=a.memberEmails.filter(function(x){return x!==e});a.ownerEmails=a.ownerEmails.filter(function(x){return x!==e});save();render()},
+  report:function(){var a=apt(),ps=repPeriods(a);sheet('Yearly report',selectF('k','Period',ps.map(function(p){return [p.k,p.label]}),'fy'+(+curMonth().slice(5)>=4?curMonth().slice(0,4):(+curMonth().slice(0,4)-1)))+'<div class="hint">Shows monthly totals, all payments, all expenses and balances. Print or save as PDF, or download for Excel.</div>',function(f){
+      var p=ps.filter(function(x){return x.k===f.k})[0];ui.rep=p;ui.tab='rep';return true},{saveLabel:'Show report'})},
+  repBack:function(){ui.tab='more';render();window.scrollTo(0,0)},
+  repCsv:function(){var a=apt(),R=ui.rep,d=repData(a,R.from,R.to),q=function(s){return '"'+String(s==null?'':s).replace(/"/g,'""')+'"'},L=[];
+    var add=function(r){L.push(r.map(q).join(','))};
+    add([a.name+' - '+R.label]);add([]);
+    add(['Month','Billed','Collected','Expenses','Cash at end','Bank at end','Pending at end']);d.rows.forEach(function(r){add([fmtMonth(r.m),r.billed,r.paid,r.exp,r.cash,r.bank,r.pend])});add(['Total',d.tot.billed,d.tot.paid,d.tot.exp]);add([]);
+    add(['Expenses by category']);Object.keys(d.cats).sort().forEach(function(k){add([k,d.cats[k]])});add([]);
+    add(['Flat','Owner','Billed','Paid','Pending at end']);d.flats.forEach(function(x){add([x.flat.no,x.flat.owner,x.billed,x.paid,x.pending])});add([]);
+    add(['Payments received']);add(['Date','Flat','Owner','Mode','Receipt','Reference','Amount']);d.pays.forEach(function(p){var f=flatOf(a,p.flatId)||{};add([p.date,f.no,f.owner,MODES[p.mode],p.receipt,p.ref,p.amount])});add([]);
+    add(['Expenses']);add(['Date','Category','Paid from','Note','Amount']);d.exps.forEach(function(e){add([e.date,e.cat,e.mode==='bank'?'Bank':'Cash',e.note,e.amount])});
+    dl(a.name+'-'+R.from+'-to-'+R.to+'.csv','text/csv','\ufeff'+L.join('\n'))},
   print:function(){window.print()},
   csv:function(){var a=apt(),c=calc(a,ui.month),q=function(s){return '"'+String(s==null?'':s).replace(/"/g,'""')+'"'};
     var out=[['Flat','Owner','Phone','Earlier due','Billed','Paid','Pending']].concat(c.rows.map(function(r){return [r.flat.no,r.flat.owner,r.flat.phone,r.openP,r.billed,r.paid,r.pending]}));
     dl(a.name+'-'+ui.month+'.csv','text/csv',out.map(function(r){return r.map(q).join(',')}).join('\n'))}
 };
 function flatSheet(f){
-  var a=apt(),isNew=!f;f=f||{no:'',owner:'',phone:'',kind:'owner',amount:a.flats.length?a.flats[a.flats.length-1].amount:2000,opening:0};
+  var a=apt(),isNew=!f;f=f||{no:'',owner:'',phone:'',kind:'owner',amount:a.flats.length?rateFor(a.flats[a.flats.length-1],ui.month):2000,opening:0};
   sheet(isNew?'Add flat':'Edit flat '+f.no,field('no','Flat number',f.no,'text','required')+field('owner','Name (owner / tenant)',f.owner)+field('phone','Phone',f.phone,'tel','inputmode="tel"')+
    selectF('kind','Occupied by',[['owner','Owner'],['tenant','Tenant']],f.kind||'owner')+
-   field('amount','Monthly maintenance (\u20B9)',f.amount,'number','step="any" required')+
+   field('amount','Monthly maintenance (\u20B9)',isNew?f.amount:rateFor(f,ui.month),'number','step="any" required')+
+   (isNew?'':field('from','If amount changed, applies from month',ui.month<a.startMonth?a.startMonth:ui.month,'month','required')+'<div class="hint">A changed amount applies from this month onward. Earlier months keep the old amount.</div>')+
    field('opening','Old pending before start month (\u20B9)',f.opening||0,'number','step="any"')+'<div class="hint">Use a negative number if the flat paid in advance.</div>',function(d){
     var no=d.no.trim();if(a.flats.some(function(x){return x.no===no&&x!==f})){alert('Flat '+no+' already exists.');return false}
-    f.no=no;f.owner=d.owner.trim();f.phone=d.phone.trim();f.kind=d.kind;f.amount=num(d.amount);f.opening=num(d.opening);
-    if(isNew){f.id=uid();a.flats.push(f)}save()},
+    f.no=no;f.owner=d.owner.trim();f.phone=d.phone.trim();f.kind=d.kind;f.opening=num(d.opening);
+    if(isNew){f.id=uid();f.amount=num(d.amount);normFlat(f,a.startMonth);a.flats.push(f)}
+    else if(Math.abs(rateFor(f,d.from)-num(d.amount))>0.001){if(d.from<a.startMonth){alert('Pick a month on or after the start month.');return false}setRate(f,d.from,d.amount)}
+    save()},
    {del:isNew?null:function(){if(a.payments.some(function(p){return p.flatId===f.id})&&!confirm('This flat has payments recorded. They will be deleted too. Continue?'))return;a.payments=a.payments.filter(function(p){return p.flatId!==f.id});a.flats=a.flats.filter(function(x){return x!==f});save()}});
 }
 function nextReceipt(a){var m=0;a.payments.forEach(function(p){var n=parseInt(p.receipt,10);if(isFinite(n)&&String(n)===String(p.receipt).trim()&&n>m)m=n});return m?String(m+1):''}
@@ -329,7 +580,6 @@ document.addEventListener('click',function(e){
 });
 $('#aptSel').onchange=function(){ui.apt=this.value;render()};
 $('#monthSel').onchange=function(){if(this.value){ui.month=this.value;render()}};
-if(navigator.storage&&navigator.storage.persist)navigator.storage.persist();
 
 /* ---------- self-test: open index.html?test ---------- */
 function selfTest(){
@@ -349,9 +599,27 @@ function selfTest(){
   eq('nov f1 pending',n.rows[0].pending,2000+2000-2000-2000+0);
   eq('nov f2 pending',n.rows[1].pending,500+4000-1000);eq('nov cash open',n.cashOpen,2900);eq('nov cash close',n.cashClose,2900-100);eq('nov bank close',n.bankClose,8200+2000);
   var b=calc(A,'2026-09');eq('before start billed',b.t.billed,0);
+  /* rate change must not touch earlier months */
+  var R={startMonth:'2026-04',openCash:0,openBank:0,flats:[{id:'r1',no:'1',amount:2000,opening:0}],payments:[{flatId:'r1',date:'2026-04-05',amount:2000,mode:'cash'}],expenses:[]};
+  normFlat(R.flats[0],R.startMonth);
+  var a6=calc(R,'2026-06'),a8before=calc(R,'2026-08');
+  setRate(R.flats[0],'2026-09',2500);
+  eq('rate: Jun billed unchanged',calc(R,'2026-06').t.billed,2000);
+  eq('rate: Jun pending unchanged',calc(R,'2026-06').t.pending,a6.t.pending);
+  eq('rate: Aug billed unchanged',calc(R,'2026-08').t.billed,2000);
+  eq('rate: Aug pending unchanged',calc(R,'2026-08').t.pending,a8before.t.pending);
+  eq('rate: Sep billed new rate',calc(R,'2026-09').t.billed,2500);
+  eq('rate: Sep arrears = 5 months (Apr paid) of 2000',calc(R,'2026-09').rows[0].openP,2000*5-2000);
+  eq('rate: Oct arrears includes Sep at 2500',calc(R,'2026-10').rows[0].openP,2000*5+2500-2000);
+  setRate(R.flats[0],'2026-12',3000);
+  eq('rate: Nov still 2500',calc(R,'2026-11').t.billed,2500);eq('rate: Dec 3000',calc(R,'2026-12').t.billed,3000);
+  eq('rate: flat.amount is latest',R.flats[0].amount,3000);
+  setRate(R.flats[0],'2026-09',2600);eq('rate: edit same month replaces',calc(R,'2026-09').t.billed,2600);
+  eq('rate: before first rate month uses first',rateFor(R.flats[0],'2020-01'),2000);
+  var rp=repData(R,'2026-04','2027-03');eq('report: billed Apr-Mar',rp.tot.billed,2000*5+2600*3+3000*4);eq('report: paid',rp.tot.paid,2000);
   var x=document.createElement('pre');x.id='testout';x.textContent=(ok?'ALL PASS\n':'FAILURES\n')+out.join('\n');document.body.prepend(x);
 }
-if(/[?&]test\b/.test(location.search)){selfTest()}else render();
+if(/[?&]test\b/.test(location.search)){selfTest()}else{render();initFirebase()}
 </script>
 </body>
 </html>
