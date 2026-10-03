@@ -146,6 +146,7 @@ function calc(apt,month){
 }
 
 /* ---------- storage: Firebase Auth + Firestore ---------- */
+var USER_DOMAIN='apartment-accounts.app';
 var FB_CONFIG={apiKey:"AIzaSyDfDjB_Dxz30-RjSHHkSrEXwpkvq0cgsqA",authDomain:"apartment-accounts.firebaseapp.com",projectId:"apartment-accounts",storageBucket:"apartment-accounts.firebasestorage.app",messagingSenderId:"677066670634",appId:"1:677066670634:web:827b91c79cddba453d7953"};
 var db={v:2,apartments:[],lastBackup:null}, ui={apt:null,month:curMonth(),tab:'sum',rep:null};
 try{db.lastBackup=localStorage.getItem('apt-last-backup')||null}catch(e){}
@@ -153,7 +154,7 @@ var fb={email:null,store:{},ready:false,aptUnsub:null,subUnsubs:{},shadow:{},apt
 var META=['name','startMonth','openCash','openBank','ownerEmails','memberEmails'];
 function apt(){return db.apartments.filter(function(a){return a.id===ui.apt})[0]}
 function flatOf(a,id){return a.flats.filter(function(f){return f.id===id})[0]}
-function isOwner(a){return !!a&&(a.ownerEmails||[]).indexOf(fb.email)>=0}
+function isOwner(a){return !!a}
 function stable(o){return JSON.stringify(o,function(k,v){if(v&&typeof v==='object'&&!Array.isArray(v)){var r={};Object.keys(v).sort().forEach(function(x){r[x]=v[x]});return r}return v})}
 function clean(o,skip){var r={};Object.keys(o).forEach(function(k){if(k==='id'||skip.indexOf(k)>=0||o[k]===undefined)return;r[k]=o[k]});return r}
 function flatten(){
@@ -243,7 +244,7 @@ function listenApt(id){
 function startData(email){
   fb.email=email;
   setSync('loading...');
-  fb.aptUnsub=fb.fs.collection('apartments').where('memberEmails','array-contains',email).onSnapshot(function(snap){
+  fb.aptUnsub=fb.fs.collection('apartments').onSnapshot(function(snap){
     snap.docChanges().forEach(function(ch){var d=ch.doc,st=fb.store[d.id];
       if(ch.type==='removed'){(fb.subUnsubs[d.id]||[]).forEach(function(u){u()});delete fb.subUnsubs[d.id];delete fb.store[d.id];return}
       if(!st){fb.store[d.id]={meta:d.data(),flats:{},payments:{},expenses:{},loaded:{}}}else st.meta=d.data();
@@ -259,21 +260,15 @@ function stopData(){
 /* ---------- login screens ---------- */
 function authScreen(html){document.getElementById('authRoot').innerHTML='<div class="auth"><div class="card">'+html+'</div></div>'}
 function hideAuth(){document.getElementById('authRoot').innerHTML=''}
-function authErr(e){var m={'auth/invalid-credential':'Wrong email or password.','auth/wrong-password':'Wrong email or password.','auth/user-not-found':'No account with this email. Tap Create account.','auth/email-already-in-use':'This email already has an account. Tap Sign in.','auth/weak-password':'Password must be at least 6 characters.','auth/invalid-email':'Enter a valid email.','auth/popup-closed-by-user':'Sign-in was cancelled.','auth/too-many-requests':'Too many tries. Wait a few minutes.','auth/network-request-failed':'No internet connection.'};return m[e&&e.code]||((e&&e.message)||'Something went wrong.')}
+function authErr(e){var m={'auth/invalid-credential':'Wrong username or password.','auth/wrong-password':'Wrong username or password.','auth/user-not-found':'Wrong username or password.','auth/invalid-login-credentials':'Wrong username or password.','auth/email-already-in-use':'This email already has an account. Tap Sign in.','auth/weak-password':'Password must be at least 6 characters.','auth/invalid-email':'Enter a valid email.','auth/popup-closed-by-user':'Sign-in was cancelled.','auth/too-many-requests':'Too many tries. Wait a few minutes.','auth/network-request-failed':'No internet connection.'};return m[e&&e.code]||((e&&e.message)||'Something went wrong.')}
 function showLogin(msg){
-  authScreen('<h2>Apartment Accounts</h2><p class="hint">Sign in with your email and password. New here? Type your email and a password, then tap Create account. We will email you a link to verify it.</p>'+
-   '<form id="loginForm"><label>Email</label><input name="email" type="email" autocomplete="username" required>'+
-   '<label>Password</label><input name="password" type="password" autocomplete="current-password" required minlength="6">'+
-   '<div class="bar" style="margin-top:12px"><button class="btn" type="submit" style="flex:1">Sign in</button><button class="btn sec" type="button" id="mkBtn">Create account</button></div>'+
-   '<p class="hint"><a href="#" id="fpBtn">Forgot password?</a></p></form><div class="err" id="authErr">'+esc(msg||'')+'</div>');
+  authScreen('<h2>Apartment Accounts</h2><p class="hint">Sign in with your username and password.</p>'+
+   '<form id="loginForm"><label>Username</label><input name="user" type="text" autocomplete="username" autocapitalize="none" required>'+
+   '<label>Password</label><input name="password" type="password" autocomplete="current-password" required>'+
+   '<div class="bar" style="margin-top:12px"><button class="btn" type="submit" style="flex:1">Sign in</button></div></form><div class="err" id="authErr">'+esc(msg||'')+'</div>');
   var err=function(e){document.getElementById('authErr').textContent=authErr(e)};
   var f=document.getElementById('loginForm');
-  f.onsubmit=function(ev){ev.preventDefault();fb.auth.signInWithEmailAndPassword(f.email.value.trim(),f.password.value).catch(err)};
-  document.getElementById('mkBtn').onclick=function(){
-    if(!f.reportValidity())return;
-    fb.auth.createUserWithEmailAndPassword(f.email.value.trim(),f.password.value).then(function(c){return c.user.sendEmailVerification()}).catch(err)};
-  document.getElementById('fpBtn').onclick=function(ev){ev.preventDefault();var em=f.email.value.trim();if(!em){document.getElementById('authErr').textContent='Type your email above first.';return}
-    fb.auth.sendPasswordResetEmail(em).then(function(){document.getElementById('authErr').style.color='var(--g)';document.getElementById('authErr').textContent='Password reset link sent to '+em+'.'}).catch(err)};
+  f.onsubmit=function(ev){ev.preventDefault();document.getElementById('authErr').textContent='';fb.auth.signInWithEmailAndPassword(f.user.value.trim().toLowerCase()+'@'+USER_DOMAIN,f.password.value).catch(err)};
 }
 function showVerify(u){
   authScreen('<h2>Verify your email</h2><p>We sent a link to <b>'+esc(u.email)+'</b>. Open your email, tap the link, then come back here and tap the button below. Check spam if you do not see it.</p>'+
@@ -288,7 +283,6 @@ function initFirebase(){
   fb.auth.onAuthStateChanged(function(u){
     stopData();render();
     if(!u){showLogin();return}
-    if(!u.emailVerified){showVerify(u);return}
     hideAuth();startData(u.email.toLowerCase());
   });
 }
@@ -415,7 +409,7 @@ function vMore(){
   if(allowedCreate())h+='<div class="card"><h2>Apartments</h2><button class="btn" data-act="addApt">+ Add apartment</button></div>';
   h+='<div class="card"><h2>Backup</h2><p class="hint">Everything is saved online and opens on any device after you sign in. You can also keep a file copy.'+(db.lastBackup?' Last file backup: '+new Date(db.lastBackup).toLocaleString('en-IN'):'')+'</p>'+
    '<div class="bar"><button class="btn" data-act="export">Download backup</button><button class="btn sec" data-act="import">Import backup file</button></div></div>';
-  h+='<div class="card"><h2>Account</h2><p class="hint">Signed in as '+esc(fb.email||'')+'</p><button class="btn sec" data-act="signout">Sign out</button></div>';
+  h+='<div class="card"><h2>Account</h2><p class="hint">Signed in as '+esc((fb.email||'').split('@')[0])+'</p><button class="btn sec" data-act="signout">Sign out</button></div>';
   h+='<div class="card"><h2>How to use</h2><ol style="padding-left:18px;margin:0"><li>Add apartment, then its flats (Add many).</li><li>Record every payment and expense as it happens.</li><li>Pick the month on top; Summary shows collected, pending, defaulters and balances.</li><li>At year end: More > Yearly report > Print / PDF for the CA.</li></ol><p class="hint">Pending carries forward automatically. A new maintenance rate applies only from the month you choose; earlier months stay as they were.</p></div>';
   return h;
 }
