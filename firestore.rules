@@ -1,35 +1,54 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    function verified() {
-      return request.auth != null && request.auth.token.email_verified == true;
+    function signedIn() { return request.auth != null; }
+    function admin() { return signedIn() && request.auth.uid == '6ENKVSVSsfeOiGPhPxax0XQJ3jf1'; }
+    function profile() { return get(/databases/$(database)/documents/staff/$(request.auth.uid)).data; }
+    function member(a) {
+      return signedIn() && profile().active == true
+        && a in profile().apartmentIds
+        && request.auth.uid in get(/databases/$(database)/documents/apartments/$(a)).data.memberUids;
     }
-    function mail() {
-      return request.auth.token.email.lower();
+    function attributedCreate() {
+      return request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.updatedBy == request.auth.uid;
     }
-    function aptData(a) {
-      return get(/databases/$(database)/documents/apartments/$(a)).data;
+    function attributedUpdate() {
+      return request.resource.data.updatedBy == request.auth.uid
+        && (!('createdBy' in resource.data) || request.resource.data.createdBy == resource.data.createdBy);
     }
-    function isMember(a) {
-      return verified() && mail() in aptData(a).memberEmails;
+    match /staff/{uid} {
+      allow read: if admin() || (signedIn() && request.auth.uid == uid);
+      allow create, update, delete: if admin();
     }
     match /apartments/{a} {
-      allow read: if verified() && mail() in resource.data.memberEmails;
-      allow create: if verified()
-        && mail() in get(/databases/$(database)/documents/config/creators).data.emails
-        && mail() in request.resource.data.ownerEmails
-        && mail() in request.resource.data.memberEmails;
-      allow update: if verified()
-        && mail() in resource.data.ownerEmails
-        && mail() in request.resource.data.ownerEmails
-        && mail() in request.resource.data.memberEmails;
-      allow delete: if verified() && mail() in resource.data.ownerEmails;
-      match /flats/{d} { allow read, write: if isMember(a); }
-      match /payments/{d} { allow read, write: if isMember(a); }
-      match /expenses/{d} { allow read, write: if isMember(a); }
+      allow read: if admin() || (signedIn() && profile().active == true
+        && a in profile().apartmentIds && request.auth.uid in resource.data.memberUids);
+      allow create, update, delete: if admin();
+      match /flats/{d} {
+        allow read: if admin() || member(a);
+        allow create, delete: if admin();
+        allow update: if admin() || (member(a)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['owner','phone','kind','updatedBy','updatedAt'])
+          && attributedUpdate());
+      }
+      match /payments/{d} {
+        allow read: if admin() || member(a);
+        allow create: if admin() || (member(a) && attributedCreate()
+          && request.resource.data.amount is number && request.resource.data.amount > 0);
+        allow update: if admin() || (member(a) && attributedUpdate()
+          && request.resource.data.amount is number && request.resource.data.amount > 0);
+        allow delete: if admin();
+      }
+      match /expenses/{d} {
+        allow read: if admin() || member(a);
+        allow create: if admin() || (member(a) && attributedCreate()
+          && request.resource.data.amount is number && request.resource.data.amount > 0);
+        allow update: if admin() || (member(a) && attributedUpdate()
+          && request.resource.data.amount is number && request.resource.data.amount > 0);
+        allow delete: if admin();
+      }
     }
-    match /{document=**} {
-      allow read, write: if false;
-    }
+    match /{document=**} { allow read, write: if false; }
   }
 }
