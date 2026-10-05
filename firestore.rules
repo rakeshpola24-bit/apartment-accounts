@@ -33,12 +33,27 @@ service cloud.firestore {
           && attributedUpdate());
       }
       match /payments/{d} {
+        function live() { return !('voided' in resource.data) || resource.data.voided != true; }
+        function validNew() {
+          return request.resource.data.amount is number && request.resource.data.amount > 0
+            && !request.resource.data.keys().hasAny(['voided','voidedBy','voidedAt','voidedName']);
+        }
+        function undo() {
+          return live() && request.resource.data.voided == true
+            && request.resource.data.voidedBy == request.auth.uid
+            && request.resource.data.voidedAt == request.time
+            && request.resource.data.voidedName is string
+            && request.resource.data.updatedBy == request.auth.uid
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(
+              ['voided','voidedBy','voidedAt','voidedName','updatedBy','updatedAt']);
+        }
+        function correction() {
+          return live() && attributedUpdate() && validNew();
+        }
         allow read: if admin() || member(a);
-        allow create: if admin() || (member(a) && attributedCreate()
-          && request.resource.data.amount is number && request.resource.data.amount > 0);
-        allow update: if admin() || (member(a) && attributedUpdate()
-          && request.resource.data.amount is number && request.resource.data.amount > 0);
-        allow delete: if admin();
+        allow create: if (admin() || (member(a) && attributedCreate())) && validNew();
+        allow update: if (admin() || member(a)) && (undo() || correction());
+        allow delete: if false;
       }
       match /expenses/{d} {
         allow read: if admin() || member(a);
