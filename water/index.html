@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Palm Beach Apartments - Water & Maintenance Sheets</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;font-family:-apple-system,Helvetica,Arial,sans-serif;background:#f3f1ec;color:#111}
+.wrap{max-width:900px;margin:0 auto;padding:12px}
+h1{font-size:20px;margin:8px 0}
+.card{background:#fff;border:1px solid #ddd;border-radius:10px;padding:12px;margin:10px 0}
+.card h2{font-size:16px;margin:0 0 8px}
+label{display:block;font-size:13px;margin:6px 0 2px;color:#444}
+input[type=text],input[type=number]{width:100%;font-size:16px;padding:8px;border:1px solid #bbb;border-radius:6px}
+.g2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.g3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
+table.rd{width:100%;border-collapse:collapse}
+table.rd th{font-size:12px;text-align:left;padding:4px}
+table.rd td{padding:2px 3px}
+table.rd td.f{font-weight:bold;width:70px}
+table.rd td.df{font-size:13px;text-align:right;width:70px;color:#555}
+table.rd td.df.warn{color:#c00;font-weight:bold}
+button{font-size:17px;padding:12px 16px;border-radius:8px;border:0;background:#1a5fb4;color:#fff;font-weight:bold;margin:4px 4px 4px 0}
+button.s{background:#666;font-size:14px;padding:8px 12px}
+.note{font-size:13px;color:#555}
+.warnbox{background:#fff4d6;border:1px solid #e5c158;border-radius:8px;padding:8px;font-size:13px;margin-top:8px}
+#pv{overflow:hidden}
+.sheet{width:210mm;height:297mm;padding:9mm;background:#fff;box-shadow:0 0 6px #aaa;margin:0 0 14px 0;page-break-after:always;transform-origin:top left;display:flex}
+.sheet table{width:100%;height:100%;border-collapse:collapse;border:2px solid #000;table-layout:fixed;font-family:Helvetica,Arial,sans-serif;font-size:11pt}
+.sheet td{border:1px solid #000;text-align:center;padding:0 2px;overflow:hidden;white-space:nowrap}
+.sheet td.t1{font-size:19pt;font-weight:bold}
+.sheet td.t2{font-size:12.5pt;font-weight:bold}
+.sheet tr.h td{background:#ddd;font-weight:bold}
+.sheet td.b{font-weight:bold}
+.sheet td.t2{white-space:normal}
+.sheet td.r{font-weight:bold;font-size:12.5pt}
+.sheet tr.tot td{border-top:2px solid #000;border-bottom:2px solid #000;font-weight:bold}
+.sheet td.ex{font-size:9pt;white-space:normal;line-height:1.05}
+.sheet tr.h td{font-size:10pt;white-space:normal;line-height:1.1}
+.sheet td.t2{font-size:11.5pt}
+.sheet td.sm{font-size:8.5pt;white-space:normal;line-height:1.1}
+@media print{
+ body{background:#fff}.wrap{padding:0;max-width:none}.noprint{display:none!important}
+ #pv{overflow:visible;height:auto!important}
+ .sheet{transform:none!important;box-shadow:none;margin:0;zoom:1}
+ @page{size:A4;margin:0}
+}
+</style></head><body><div class="wrap">
+<h1 class="noprint">Palm Beach Apartments - monthly sheets</h1>
+
+<div class="card noprint"><h2>1. Month and costs</h2>
+<label>Water sheet heading</label><input type="text" id="t1" value="Monthly water billing for October & November 2025 (collecting first week of December 2025)">
+<label>Maintenance sheet heading</label><input type="text" id="t2" value="Maintenance charges for October & November 2025">
+<div class="g2"><div><label>First reading date</label><input type="text" id="d1" value="01.10.2025"></div><div><label>Second reading date</label><input type="text" id="d2" value="01.12.2025"></div></div>
+<label>Water cost (Rs)</label>
+<div class="g3"><div><label>GVMC Waterbill</label><input type="number" inputmode="decimal" id="c_g" value=""></div><div><label>Water Tankers</label><input type="number" inputmode="decimal" id="c_t" value="0"></div><div><label>Electricity for pumps</label><input type="number" inputmode="decimal" id="c_e" value="5058"></div></div>
+<div class="warnbox">The cost shown (5058) is only the September figure. Type the real cost before you print.</div>
+</div>
+
+<div class="card noprint"><h2>2. Meter readings</h2>
+<p class="note">First column = earlier month, second = later month. Type 8 digits (with the leading zero). Difference shows on the right; red means a reading went down or is 0.</p>
+<table class="rd" id="rd"><thead><tr><th>Flat</th><th>Earlier</th><th>Later</th><th style="text-align:right">Diff</th></tr></thead><tbody></tbody></table>
+<div class="g2"><div><label>Common area: earlier</label><input type="text" inputmode="numeric" id="cp"></div><div><label>Common area: later</label><input type="text" inputmode="numeric" id="cc"></div></div>
+<button id="shift">Finished this month: save and start next month</button><p class="note">Press this after printing. The later readings become next month's earlier readings, saved on this phone/computer. Next month you only type the new readings. (Saved in this browser only; use the same device and browser each time.)</p>
+</div>
+
+<div class="card noprint"><h2>3. Other charges (same for every flat)</h2>
+<div class="g2"><div><label>Maintenance: flats x01 and x02</label><input type="number" id="m1" value="2090"></div><div><label>Maintenance: other flats</label><input type="number" id="m2" value="1630"></div>
+<div><label>Maintenance: 601 Pent house</label><input type="number" id="m3" value="4500"></div><div><label>Waste collection</label><input type="number" id="wc" value="50"></div>
+<div><label>Pest control</label><input type="number" id="pc" value="0"></div><div><label>GVMC Waste</label><input type="number" id="gw" value="75"></div>
+<div><label>Extra column name</label><input type="text" id="xn" value="Dasara Mamulu"></div><div><label>Extra column amount</label><input type="number" id="xa" value="800"></div>
+<div><label>Minimum water amount</label><input type="number" id="mn" value="100"></div><div><label>Round water to nearest</label><input type="number" id="rn" value="10"></div></div>
+<p class="note">Water rate = total water cost / total units of all flats. Water amount = units x rate, rounded, not below the minimum. Common area meter is shown only for information (fixed rate 0.010519, not in the total).</p>
+</div>
+
+<div class="card noprint"><h2>4. Print</h2><div id="warn"></div>
+<button id="pr">Print / Save as PDF (2 pages)</button>
+<p class="note">On iPhone: tap Print, then pinch out on the preview (or Share, Save to Files) to get the PDF.</p></div>
+
+<div id="pv"><div id="s1" class="sheet"></div><div id="s2" class="sheet"></div></div>
+</div>
+<script>
+var D={"order": ["101", "201", "301", "401", "501", "102", "202", "302", "402", "502", "103", "203", "303", "403", "503", "104", "204", "304", "404", "504", "105", "205", "305", "405", "505", "106", "206", "306", "406", "506", "107", "207", "307", "407", "507", "108", "208", "308", "408", "508", "601"], "prev": {"101": "02861482", "201": "03436741", "301": "05081999", "401": "06110482", "501": "05044087", "102": "02480524", "202": "05217021", "302": "04248879", "402": "04679918", "502": "03006290", "103": "02159169", "203": "03533721", "303": "02161626", "403": "03423541", "503": "01567855", "104": "00534477", "204": "03195545", "304": "02328766", "404": "02031261", "504": "02104027", "105": "03636702", "205": "03790753", "305": "03053509", "405": "02965152", "505": "02463319", "106": "03106446", "206": "01816732", "306": "01574659", "406": "05234523", "506": "03249610", "107": "02875963", "207": "04165207", "307": "03658193", "407": "01719824", "507": "02695165", "108": "01319701", "208": "04292189", "308": "02911554", "408": "03028076", "508": "01324001", "601": "02648340"}, "cur": {"101": "02861598", "201": "03456047", "301": "05085844", "401": "06213708", "501": "05105928", "102": "02492782", "202": "05255003", "302": "04302561", "402": "04754739", "502": "03046658", "103": "02169230", "203": "03534924", "303": "02161640", "403": "03432808", "503": "01571370", "104": "00542312", "204": "03230358", "304": "02360072", "404": "02031261", "504": "02104027", "105": "03666819", "205": "03808283", "305": "03061465", "405": "02970722", "505": "02482041", "106": "03167933", "206": "01835243", "306": "01576196", "406": "05238241", "506": "03250360", "107": "02897106", "207": "04205870", "307": "03667862", "407": "01722989", "507": "02749402", "108": "01319701", "208": "04324526", "308": "02969696", "408": "03057429", "508": "01349990", "601": "03025540"}, "cprev": "04718612", "ccur": "04742881"};
+var $=function(i){return document.getElementById(i)};
+var KEY='pb_water_v1';
+var tb=document.querySelector('#rd tbody');
+D.order.forEach(function(k){var tr=document.createElement('tr');
+tr.innerHTML='<td class="f">'+(k=='601'?'601 PH':k)+'</td><td><input type="text" inputmode="numeric" data-k="'+k+'" data-w="p"></td><td><input type="text" inputmode="numeric" data-k="'+k+'" data-w="c"></td><td class="df" id="df'+k+'"></td>';tb.appendChild(tr);});
+function load(){var s=null;try{s=JSON.parse(localStorage.getItem(KEY))}catch(e){}
+ var inps=document.querySelectorAll('input[data-k]');
+ inps.forEach(function(i){var v=(s&&s.r&&s.r[i.dataset.k+i.dataset.w]);if(v==null)v=(i.dataset.w=='p'?D.prev:D.cur)[i.dataset.k];i.value=v;});
+ $('cp').value=(s&&s.cp)||D.cprev;$('cc').value=(s&&s.cc)||D.ccur;
+ if(s&&s.f)for(var id in s.f){$(id).value=s.f[id]}}
+var FIELDS=['t1','t2','d1','d2','c_g','c_t','c_e','m1','m2','m3','wc','pc','gw','xn','xa','mn','rn'];
+function save(){var r={};document.querySelectorAll('input[data-k]').forEach(function(i){r[i.dataset.k+i.dataset.w]=i.value});
+ var f={};FIELDS.forEach(function(id){f[id]=$(id).value});
+ try{localStorage.setItem(KEY,JSON.stringify({r:r,cp:$('cp').value,cc:$('cc').value,f:f}))}catch(e){}}
+function num(v){var n=parseFloat(v);return isNaN(n)?0:n}
+function rd(v){return String(v).replace(/\D/g,'')}
+function pad(v){v=rd(v);return v?('00000000'+v).slice(-8):''}
+function fmt(n){return String(n)}
+function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;')}
+function build(){save();
+ var rows=[],tot=0,warn=[];
+ D.order.forEach(function(k){
+  var p=document.querySelector('input[data-k="'+k+'"][data-w="p"]').value,c=document.querySelector('input[data-k="'+k+'"][data-w="c"]').value;
+  var diff=num(rd(c))-num(rd(p));var has=rd(c)!==''&&rd(p)!=='';
+  if(!has)diff=0;tot+=diff;rows.push({k:k,p:p,c:c,diff:diff});
+  var el=$('df'+k);el.textContent=has?diff:'';el.className='df'+((has&&diff<=0)?' warn':'');
+  if(!has)warn.push('Flat '+k+': reading missing');else if(diff<0)warn.push('Flat '+k+': later reading is lower than earlier');
+ });
+ var cost=num($('c_g').value)+num($('c_t').value)+num($('c_e').value);
+ var rate=tot>0?cost/tot:0;var mn=num($('mn').value),rn=num($('rn').value)||1;
+ var tamt=0,trd=0;
+ rows.forEach(function(r){r.amt=r.diff*rate;r.rd=Math.max(mn,Math.round(r.amt/rn)*rn);tamt+=r.amt;trd+=r.rd;
+  var avg=tot/rows.length;if(r.diff>0&&r.diff>6*avg)warn.push('Flat '+r.k+': very high use ('+r.diff+'), check the reading');});
+ if(rows.some(function(r){return r.diff===0}))warn.push('Zero use: '+rows.filter(function(r){return r.diff===0}).map(function(r){return r.k}).join(', ')+' (billed the minimum)');
+ $('warn').innerHTML=warn.length?'<div class="warnbox"><b>Check:</b><br>'+warn.map(esc).join('<br>')+'</div>':'';
+ var cd=num(rd($('cc').value))-num(rd($('cp').value));
+ // sheet 1
+ var h='<table><colgroup><col style="width:11%"><col style="width:13%"><col style="width:13%"><col style="width:12%"><col style="width:11%"><col style="width:23%"><col style="width:7%"><col style="width:10%"></colgroup>';
+ h+='<tr><td colspan="8" class="t1">PALM BEACH APARTMENTS</td></tr>';
+ h+='<tr><td colspan="8" class="t2">'+esc($('t1').value)+'</td></tr>';
+ h+='<tr class="h"><td>Flat No</td><td>'+esc($('d1').value)+'</td><td>'+esc($('d2').value)+'</td><td>Difference</td><td>Amount</td><td colspan="2">Expenditure</td><td>Rounded</td></tr>';
+ var ex=[['GVMC Waterbill',$('c_g').value],['Water Tankers',$('c_t').value],['Electricity for pumps',$('c_e').value],['',''],['Total',cost]];
+ rows.forEach(function(r,i){var e=ex[i]||['',''];
+  h+='<tr><td class="b">'+r.k+'</td><td>'+esc(pad(r.p))+'</td><td>'+esc(pad(r.c))+'</td><td>'+r.diff+'</td><td class="b">'+r.amt.toFixed(2)+'</td><td class="b ex">'+esc(e[0])+'</td><td class="b">'+esc(e[1])+'</td><td class="r">'+r.rd+'</td></tr>';});
+ h+='<tr class="tot"><td>Total</td><td></td><td></td><td>'+tot+'</td><td>'+cost.toFixed(2)+'</td><td></td><td></td><td class="r">'+trd+'</td></tr>';
+ h+='<tr class="tot"><td class="sm">Common<br>Area meter</td><td>'+esc(pad($('cp').value))+'</td><td>'+esc(pad($('cc').value))+'</td><td>'+cd+'</td><td>'+(cd*0.010519).toFixed(2)+'</td><td></td><td></td><td></td></tr></table>';
+ $('s1').innerHTML=h;
+ // sheet 2
+ var g='<table><colgroup><col style="width:13%"><col style="width:14%"><col style="width:13%"><col style="width:12%"><col style="width:10%"><col style="width:11%"><col style="width:15%"><col style="width:12%"></colgroup>';
+ g+='<tr><td colspan="8" class="t1">PALM BEACH APARTMENTS</td></tr><tr><td colspan="8" class="t2">'+esc($('t2').value)+'</td></tr>';
+ g+='<tr class="h" style="height:7%"><td>Flat No</td><td>Maintenance<br>charges</td><td>Water charges</td><td>Waste<br>collection</td><td>Pest<br>control</td><td>GVMC<br>Waste</td><td>'+esc($('xn').value)+'</td><td>Total</td></tr>';
+ var col=[0,0,0,0,0,0,0];
+ rows.forEach(function(r){var m=r.k=='601'?num($('m3').value):(r.k.slice(1)=='01'||r.k.slice(1)=='02'?num($('m1').value):num($('m2').value));
+  var v=[m,r.rd,num($('wc').value),num($('pc').value),num($('gw').value),num($('xa').value)];var t=v.reduce(function(a,b){return a+b},0);
+  g+='<tr><td class="b">'+(r.k=='601'?'Pent house':r.k)+'</td><td>'+v[0]+'</td><td class="b">'+v[1]+'</td><td>'+v[2]+'</td><td>'+v[3]+'</td><td>'+v[4]+'</td><td>'+v[5]+'</td><td class="r">'+t+'</td></tr>';
+  v.concat([t]).forEach(function(x,i){col[i]+=x});});
+ g+='<tr class="tot"><td>Total</td>'+col.map(function(x,i){return '<td'+(i==6?' class="r"':'')+'>'+x+'</td>'}).join('')+'</tr></table>';
+ $('s2').innerHTML=g;
+ fit();}
+function fit(){var w=Math.min(document.documentElement.clientWidth,900)-24;var sw=793.7;var sc=Math.min(1,w/sw);
+ ['s1','s2'].forEach(function(i){var e=$(i);e.style.transform='scale('+sc+')';e.style.marginBottom=(-(1-sc)*1122.5+14)+'px';});
+ $('pv').style.height='';}
+document.addEventListener('input',function(e){if(e.target.matches('input'))build()});
+document.addEventListener('change',function(e){if(e.target.dataset&&e.target.dataset.k){e.target.value=pad(e.target.value);build()}});
+$('pr').onclick=function(){window.print()};
+$('shift').onclick=function(){if(!confirm('Save these readings as the earlier readings for next month and clear the later column? Print first if you have not.'))return;
+ document.querySelectorAll('input[data-k][data-w="c"]').forEach(function(i){var p=document.querySelector('input[data-k="'+i.dataset.k+'"][data-w="p"]');p.value=i.value;i.value=''});
+ $('cp').value=$('cc').value;$('cc').value='';$('d1').value=$('d2').value;$('d2').value='';build();window.scrollTo(0,0)};
+window.addEventListener('resize',fit);
+load();build();
+</script></body></html>
