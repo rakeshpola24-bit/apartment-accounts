@@ -63,6 +63,18 @@ button.s{background:#666;font-size:14px;padding:8px 12px}
 <button id="shift">Finished this month: save and start next month</button><p class="note">Press this after printing. The later readings become next month's earlier readings, saved on this phone/computer. Next month you only type the new readings. (Saved in this browser only; use the same device and browser each time.)</p>
 </div>
 
+<div class="card noprint"><h2>Read readings from a photo (optional)</h2>
+<p class="note">Take a straight, well-lit photo of the handwritten page, and crop it to the table only (flat numbers and readings, no names). The photo is sent to Google Gemini (free tier), which may use it to improve Google products. You always check the suggestions before they are used.</p>
+<label>These readings are the</label>
+<select id="scanTarget" style="width:100%;font-size:16px;padding:8px"><option value="c">Later readings (this month)</option><option value="p">Earlier readings (last month)</option></select>
+<input type="file" id="scanFile" accept="image/*" style="margin:8px 0;font-size:15px;width:100%">
+<button id="scanGo" class="s" style="font-size:16px;padding:10px 14px">Read this photo</button>
+<div id="scanMsg" class="note"></div>
+<div id="scanRes" style="display:none">
+<table class="rd" id="scanTbl"><thead><tr><th>Flat</th><th>Read from photo (fix if wrong)</th><th>Now in the box</th></tr></thead><tbody></tbody></table>
+<button id="scanApply">Use these readings</button><button class="s" id="scanCancel">Cancel</button>
+</div></div>
+
 <div class="card noprint"><h2>3. Other charges (same for every flat)</h2>
 <div class="g2"><div><label>Maintenance: flats x01 and x02</label><input type="number" id="m1" value="2090"></div><div><label>Maintenance: other flats</label><input type="number" id="m2" value="1630"></div>
 <div><label>Maintenance: 601 Pent house</label><input type="number" id="m3" value="4500"></div><div><label>Waste collection</label><input type="number" id="wc" value="50"></div>
@@ -148,6 +160,55 @@ $('pr').onclick=function(){window.print()};
 $('shift').onclick=function(){if(!confirm('Save these readings as the earlier readings for next month and clear the later column? Print first if you have not.'))return;
  document.querySelectorAll('input[data-k][data-w="c"]').forEach(function(i){var p=document.querySelector('input[data-k="'+i.dataset.k+'"][data-w="p"]');p.value=i.value;i.value=''});
  $('cp').value=$('cc').value;$('cc').value='';$('d1').value=$('d2').value;$('d2').value='';build();window.scrollTo(0,0)};
+
+/* ---- photo reading (Firebase AI Logic, Gemini Developer API) ---- */
+var FB_CFG={apiKey:"AIzaSyDfDjB_Dxz30-RjSHHkSrEXwpkvq0cgsqA",authDomain:"apartment-accounts.firebaseapp.com",projectId:"apartment-accounts",appId:"1:677066670634:web:827b91c79cddba453d7953"};
+var SDK='https://www.gstatic.com/firebasejs/12.4.0/';
+var MODELS=["gemini-3.5-flash","gemini-3.7-flash","gemini-3.5-flash-lite"];
+var scanRows=[];
+function shrink(file,maxSide){return new Promise(function(res,rej){var img=new Image();var u=URL.createObjectURL(file);
+ img.onload=function(){var sc=Math.min(1,maxSide/Math.max(img.width,img.height));var c=document.createElement('canvas');c.width=Math.round(img.width*sc);c.height=Math.round(img.height*sc);
+  c.getContext('2d').drawImage(img,0,0,c.width,c.height);URL.revokeObjectURL(u);res(c.toDataURL('image/jpeg',0.9).split(',')[1]);};
+ img.onerror=function(){rej(new Error('Could not open this image'))};img.src=u;});}
+function normFlat(f){f=String(f||'').toUpperCase().replace(/\s+/g,'');if(/COMMON|CMN/.test(f))return 'COMMON';if(/PENT|PH/.test(f))return '601';var m=f.match(/\d{3}/);return m?m[0]:f;}
+function callAI(b64){
+ return import(SDK+'firebase-app.js').then(function(A){return import(SDK+'firebase-ai.js').then(function(I){
+  var app;try{app=A.getApp('water')}catch(e){app=A.initializeApp(FB_CFG,'water')}
+  var ai=I.getAI(app,{backend:new I.GoogleAIBackend()});
+  var schema=I.Schema.array({items:I.Schema.object({properties:{flat:I.Schema.string(),reading:I.Schema.string(),uncertain:I.Schema.boolean()}})});
+  var prompt='This is a handwritten page of water meter readings for apartment flats, in two columns of rows. Each row has a flat label (three digits like 101, 204, 508, or 601, or the word COMMON) and a meter reading written as digits, usually 8 digits with a leading zero (for example 02861482). Return every row you can see, in any order. Copy the reading digits exactly as written, including leading zeros. Do not invent or fix digits. If a row is hard to read, still give your best reading but set uncertain to true. Use the flat label exactly as written.';
+  var tryModel=function(i){var name=MODELS[i];var model=I.getGenerativeModel(ai,{model:name,generationConfig:{responseMimeType:'application/json',responseSchema:schema,temperature:0}});
+   return model.generateContent([{inlineData:{mimeType:'image/jpeg',data:b64}},{text:prompt}]).then(function(r){return JSON.parse(r.response.text())}).catch(function(e){if(i+1<MODELS.length)return tryModel(i+1);throw e;});};
+  return tryModel(0);});});}
+function showScan(list){
+ scanRows=[];var seen={};var tgt=$('scanTarget').value;
+ list.forEach(function(x){var f=normFlat(x.flat);var d=rd(x.reading||'');scanRows.push({flat:f,val:d,unsure:!!x.uncertain,dup:!!seen[f],note:''});seen[f]=1;});
+ var expect=D.order.concat(['COMMON']);var cnt={};scanRows.forEach(function(x){cnt[x.flat]=(cnt[x.flat]||0)+1});
+ var dups=Object.keys(cnt).filter(function(k){return cnt[k]>1});var miss=expect.filter(function(k){return !cnt[k]});
+ if(dups.length===1&&miss.length===1){var first=scanRows.filter(function(x){return x.flat===dups[0]})[0];first.flat=miss[0];first.note='label looked like '+dups[0]+', placed as '+miss[0]+' - check';first.unsure=true;}
+ var tb=document.querySelector('#scanTbl tbody');tb.innerHTML='';
+ var order=D.order.concat(['COMMON']);
+ var rowsFor=order.map(function(k){return {k:k,r:scanRows.filter(function(x){return x.flat===k})}});
+ var extra=scanRows.filter(function(x){return order.indexOf(x.flat)<0});
+ rowsFor.forEach(function(o){var r=o.r[0];var cur=o.k==='COMMON'?$(tgt==='c'?'cc':'cp').value:document.querySelector('input[data-k="'+o.k+'"][data-w="'+tgt+'"]').value;
+  var flags=[];if(!r)flags.push('not found in photo');else{if(r.val.length!==8)flags.push(r.val.length+' digits');if(r.unsure)flags.push('unsure');if(r.note)flags.push(r.note);if(o.r.length>1)flags.push('seen twice');
+   var other=o.k==='COMMON'?$(tgt==='c'?'cp':'cc').value:document.querySelector('input[data-k="'+o.k+'"][data-w="'+(tgt==='c'?'p':'c')+'"]').value;
+   if(other&&r.val.length&&Math.abs(num(r.val)-num(rd(other)))>0){var dd=tgt==='c'?num(r.val)-num(rd(other)):num(rd(other))-num(r.val);if(dd<0)flags.push('lower than the other month');}}
+  var tr=document.createElement('tr');tr.dataset.k=o.k;
+  tr.innerHTML='<td class="f">'+(o.k==='601'?'601 PH':o.k==='COMMON'?'Common':o.k)+'</td><td><input type="text" inputmode="numeric" value="'+(r?r.val:'')+'" style="'+(flags.length?'background:#fff4d6;':'')+'"><div class="note" style="color:#b00">'+flags.join(', ')+'</div></td><td class="df">'+esc(cur)+'</td>';
+  tb.appendChild(tr);});
+ $('scanRes').style.display='block';
+ $('scanMsg').textContent='Found '+scanRows.length+' rows'+(extra.length?' (ignored: '+extra.map(function(x){return x.flat}).join(', ')+')':'')+'. Check the yellow ones against the page, then press "Use these readings".';}
+$('scanGo').onclick=function(){var f=$('scanFile').files[0];if(!f){$('scanMsg').textContent='Choose a photo first.';return}
+ $('scanMsg').textContent='Reading the photo... (can take up to a minute)';$('scanRes').style.display='none';
+ shrink(f,1800).then(callAI).then(showScan).catch(function(e){$('scanMsg').textContent='Could not read the photo: '+(e&&e.message?e.message:e)+' You can still type the readings by hand.'});};
+$('scanApply').onclick=function(){var tgt=$('scanTarget').value;var n=0;
+ document.querySelectorAll('#scanTbl tbody tr').forEach(function(tr){var v=rd(tr.querySelector('input').value);if(!v)return;var k=tr.dataset.k;var val=v.length<8?v:v;
+  if(k==='COMMON'){$(tgt==='c'?'cc':'cp').value=val}else{document.querySelector('input[data-k="'+k+'"][data-w="'+tgt+'"]').value=val}n++;});
+ $('scanRes').style.display='none';$('scanMsg').textContent='Applied '+n+' readings. Check the Difference column and warnings below.';build();};
+$('scanCancel').onclick=function(){$('scanRes').style.display='none';$('scanMsg').textContent='';};
+window.__scanTest=showScan;
+
 window.addEventListener('resize',fit);
 load();build();
 </script></body></html>
