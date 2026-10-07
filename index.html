@@ -767,5 +767,5 @@ var earlierView=vDocument;vDocument=function(){var h=earlierView();if(ui.doc&&ui
 </script>
 
 <style>@media print{#main>.document-view,.document-view{break-inside:auto!important;page-break-inside:auto!important;box-shadow:none!important}.document-view .statement-table{overflow:visible!important}.document-view table{box-shadow:none!important}.document-view .owner-statement-head{break-inside:avoid!important}}</style>
-<script>(function(){var removed=[];window.addEventListener('beforeprint',function(){if(removed.length)return;document.querySelectorAll('.mobile-statement').forEach(function(el){var mark=document.createComment('mobile statement');el.parentNode.insertBefore(mark,el);removed.push({el:el,mark:mark});el.remove()})});window.addEventListener('afterprint',function(){removed.forEach(function(r){if(r.mark.parentNode){r.mark.parentNode.insertBefore(r.el,r.mark);r.mark.remove()}});removed=[]})})();</script>
+
 </body></html>
