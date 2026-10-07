@@ -245,7 +245,7 @@ var bM4=vMore;vMore=function(){var a=apt();return(a?'<div class="card"><h2>Asset
       selectF("cat", "Category", CATS.map(function (c) { return [c, c]; }), e.cat) +
         field("amount", "Amount (\u20b9)", e.amount, "number", 'step="any" min="0.01" required') +
         field("date", "Date", e.date, "date", "required") +
-        selectF("mode", "Paid from", [["cash", "Cash"], ["bank", "Bank / UPI"]], e.mode) +
+        selectF("mode", "Paid from", [["cash", "Cash"], ["bank", "Bank / UPI"]], e.mode) + bankSel(a, e.bank) +
         field("paidTo", "Paid to (shop or person, optional)", e.paidTo || "") +
         field("note", "Note (optional)", e.note) +
         field("voucher", "Voucher no.", e.voucher || nextVoucher(a)) +
@@ -254,7 +254,7 @@ var bM4=vMore;vMore=function(){var a=apt();return(a?'<div class="card"><h2>Asset
         if (num(d.amount) <= 0) { alert("Enter an amount."); return false; }
         var v = (d.voucher || "").trim();
         if (v && voucherTaken(a, v, e.id)) { alert("Voucher no. " + v + " is already used for another expense. Change it."); return false; }
-        e.cat = d.cat; e.amount = num(d.amount); e.date = d.date; e.mode = d.mode;
+        e.cat = d.cat; e.amount = num(d.amount); e.date = d.date; e.mode = d.mode; e.bank = d.mode === "bank" ? (d.bank || "") : "";
         e.note = d.note.trim(); e.paidTo = (d.paidTo || "").trim(); e.voucher = v;
         if (isNew) { e.id = uid(); a.expenses.push(e); }
         save();
