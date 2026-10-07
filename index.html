@@ -246,6 +246,7 @@ var bM4=vMore;vMore=function(){var a=apt();return(a?'<div class="card"><h2>Asset
         field("amount", "Amount (\u20b9)", e.amount, "number", 'step="any" min="0.01" required') +
         field("date", "Date", e.date, "date", "required") +
         selectF("mode", "Paid from", [["cash", "Cash"], ["bank", "Bank / UPI"]], e.mode) + bankSel(a, e.bank) +
+        '<label><input type="checkbox" name="pocketPaid" value="yes" '+(e.pocketPaid?'checked':'')+'> Paid from pocket (reimburse later)</label><p class="hint">For cash expenses only. Still an expense, but does not reduce apartment cash.</p>' +
         field("paidTo", "Paid to (shop or person, optional)", e.paidTo || "") +
         field("note", "Note (optional)", e.note) +
         field("voucher", "Voucher no.", e.voucher || nextVoucher(a)) +
@@ -254,7 +255,7 @@ var bM4=vMore;vMore=function(){var a=apt();return(a?'<div class="card"><h2>Asset
         if (num(d.amount) <= 0) { alert("Enter an amount."); return false; }
         var v = (d.voucher || "").trim();
         if (v && voucherTaken(a, v, e.id)) { alert("Voucher no. " + v + " is already used for another expense. Change it."); return false; }
-        e.cat = d.cat; e.amount = num(d.amount); e.date = d.date; e.mode = d.mode; e.bank = d.mode === "bank" ? (d.bank || "") : "";
+        e.cat = d.cat; e.amount = num(d.amount); e.date = d.date; e.mode = d.mode; e.pocketPaid = d.mode === "cash" && d.pocketPaid === "yes"; e.bank = d.mode === "bank" ? (d.bank || "") : "";
         e.note = d.note.trim(); e.paidTo = (d.paidTo || "").trim(); e.voucher = v;
         if (isNew) { e.id = uid(); a.expenses.push(e); }
         save();
@@ -278,7 +279,7 @@ var bM4=vMore;vMore=function(){var a=apt();return(a?'<div class="card"><h2>Asset
       var i = ra.lastIndexOf("</div>");
       ra = ra.slice(0, i) + '<button class="btn sm sec" data-act="vouOpen" data-id="' + e.id + '">Voucher</button>' + ra.slice(i);
       h += '<div class="item record"><div class="record-main"><div><b>' + esc(e.cat) + "</b><small>" + fmtDate(e.date) +
-        ' &middot; <span class="tag">' + (e.mode === "bank" ? "Bank" : "Cash") + "</span>" +
+        ' &middot; <span class="tag">' + (e.mode === "bank" ? "Bank" : e.pocketPaid ? "Pocket-paid" : "Cash") + "</span>" +
         (e.paidTo ? " &middot; " + esc(e.paidTo) : "") + (e.note ? " &middot; " + esc(e.note) : "") +
         (e.voucher ? " &middot; " + esc(e.voucher) : "") +
         '</small></div><div class="amt">' + inr(num(e.amount)) + "</div></div>" + ra + "</div>";
