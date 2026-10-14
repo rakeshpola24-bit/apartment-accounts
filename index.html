@@ -801,4 +801,59 @@ window.oldBookVersion='1.1';window.oldBookRows=all;
 })();
 
 </script>
+<script>
+/* Uniform old + current view. Display only: old records are never fed to dues, cash or bank. */
+(function(){
+'use strict';
+var LAST_OLD='2024-03';
+function recs(a){return a&&a.historicalBook&&Array.isArray(a.historicalBook.records)?a.historicalBook.records:[]}
+function pure(r){var t=((r.coverage||'')+' '+(r.description||'')).trim();return /^(terrace|new tenant lift|new shifting|shifting charges|flat shift \(in\))/i.test(t)&&t.indexOf('+')<0}
+function rateTable(a){var by={};recs(a).forEach(function(r){if(r.kind!=='Receipt'||!(r.amount>0)||!r.flat||pure(r))return;var f=(a.flats||[]).filter(function(x){return x.no===r.flat})[0];if(f&&f.ledgerHistory)return;(by[r.bookMonth]=by[r.bookMonth]||{})[r.amount]=((by[r.bookMonth]||{})[r.amount]||0)+1});var out={};Object.keys(by).forEach(function(m){var best=0,bc=0;Object.keys(by[m]).forEach(function(k){if(by[m][k]>bc){bc=by[m][k];best=Number(k)}});out[m]=best});return out}
+function rowAmt(r){return r.amount===null||r.amount===''||r.amount===undefined?null:num(r.amount)}
+function oldRows(a,f,to){
+  var rt=rateTable(a),months=Object.keys(rt).sort(),mine=recs(a).filter(function(r){return r.kind==='Receipt'&&r.flat===f.no});
+  if(!months.length)return[];
+  var out=[];
+  function dl(r,m){return r.date?null:fmtMonth(m)+' (date not written)'}
+  function how(r){return r.bank||(/cash/i.test(r.mode||'')?'Cash':'Bank / UPI')}
+  months.forEach(function(m){
+    if(m>LAST_OLD||m>to)return;
+    var rs=mine.filter(function(r){return r.bookMonth===m}),pays=[],extras=[],main=0;
+    rs.forEach(function(r){var v=rowAmt(r);if(v===null){extras.push({r:r,v:null});return}if(pure(r))extras.push({r:r,v:v});else{pays.push({r:r,v:v});main+=v}});
+    var c=rt[m],charge=main===0?c:(main<c?main:c),bm=monthAt(mIdx(m)-1);
+    if(!pays.length){var last=out[out.length-1];if(last&&last.kind==='oldbill'&&last.open){last.to=bm;last.n++;last.charge+=charge}else out.push({date:m+'-01',kind:'oldbill',open:true,from:bm,to:bm,n:1,charge:charge,paid:0})}
+    else{
+      pays.forEach(function(p,i){var r=p.r;out.push({date:r.date||m+'-28',dateLabel:dl(r,m),kind:'oldpay',label:(i===0?'Maintenance '+fmtMonth(bm)+' - ':'Further payment - ')+'received '+how(r)+(r.receipt?', receipt '+r.receipt:'')+(r.coverage?' (for '+r.coverage+')':''),charge:i===0?charge:0,paid:p.v,note:r.note||''})});
+    }
+    extras.forEach(function(x){var r=x.r;if(x.v===null){out.push({date:r.date||m+'-28',dateLabel:dl(r,m),kind:'oldpay',label:'Receipt '+(r.receipt||'')+' - amount not written',charge:0,paid:0,note:r.note||''});return}out.push({date:r.date||m+'-28',dateLabel:dl(r,m),kind:'oldother',label:(r.coverage||r.description||'Other receipt')+(r.receipt?', receipt '+r.receipt:'')+' (own receipt in the book, not maintenance)',charge:x.v,paid:x.v,note:r.note||''})});
+  });
+  out=out.filter(function(e){return e.date.slice(0,7)<=to});
+  out.sort(function(x,y){return x.date.localeCompare(y.date)});
+  var bal=0;out.forEach(function(e){if(e.kind==='oldbill')e.label=(e.n>1?'Maintenance '+fmtMonth(e.from)+' to '+fmtMonth(e.to)+' ('+e.n+' months)':'Maintenance '+fmtMonth(e.from))+' - no receipt written';bal+=e.charge-e.paid;e.balance=bal});
+  return out;
+}
+window.uniformOldRows=oldRows;
+var prev=statementRows;
+statementRows=function(a,f,to){
+  if(f.ledgerHistory||!recs(a).length)return prev(a,f,to);
+  var yr=ui.statementYear;ui.statementYear='';var cur;try{cur=prev(a,f,to)}finally{ui.statementYear=yr}
+  var old=oldRows(a,f,to>=a.startMonth?monthAt(mIdx(a.startMonth)):to),b=old.length?old[old.length-1].balance:0,all=old;
+  if(to>=a.startMonth){var o=num(f.opening);old.push({date:a.startMonth+'-01',dateLabel:'Old books end here',label:'Old books closing vs current opening',charge:0,paid:0,balance:b,kind:'history-check',note:'Old books close at '+balanceText(b)+'. Current opening: '+balanceText(o)+'. '+(o===b?'These match, so nothing is counted twice.':'Difference '+inr(Math.abs(o-b))+'. Shown only, not a payment or income and no adjustment made.')});all=old.concat(cur)}
+  if(!yr)return all;
+  var before=all.filter(function(r){return r.date<yr+'-01-01'}),shown=all.filter(function(r){return r.date>=yr+'-01-01'&&r.date<=yr+'-12-31'});
+  if(before.length)shown.unshift({date:yr+'-01-01',label:'Balance brought forward',charge:0,paid:0,balance:before[before.length-1].balance,kind:'year-open'});return shown};
+var prevDoc=docData;
+docData=function(){var d=prevDoc(),a=apt(),f=ui.doc&&ui.doc.type==='statement'?flatOf(a,ui.doc.id):null;if(!f||f.ledgerHistory||!recs(a).length)return d;
+  (d.rows||[]).forEach(function(e){if(e.dateLabel){d.html=d.html.replace('<td>'+fmtDate(e.date)+'</td><td>'+esc(e.label),'<td>'+esc(e.dateLabel)+'</td><td>'+esc(e.label));d.html=d.html.replace('<small>'+fmtDate(e.date)+'</small><b>'+esc(e.label),'<small>'+esc(e.dateLabel)+'</small><b>'+esc(e.label))}});
+  d.html=d.html.replace('<div class="table-scroll statement-table">','<p class="hint">One statement from May 2018. Receipts as written in the paper books; a month with no receipt is charged at that month\'s common amount; a part payment is charged as paid. Rows written in the book as their own terrace, shifting or lift receipt are shown separately and are not maintenance.</p><div class="table-scroll statement-table">');return d};
+/* uniform receipts and expenses lists */
+function oldPay(a,r){var f=(a.flats||[]).filter(function(x){return x.no===r.flat})[0];return{id:r.id,flatId:f?f.id:null,flatNo:r.flat,date:r.date||'',amount:r.amount,mode:(r.bank||/bank/i.test(r.mode||''))?'bank':'cash',receipt:r.receipt,note:[r.coverage?'For '+r.coverage:'',r.note].filter(Boolean).join(' - '),old:true,bookMonth:r.bookMonth}}
+function monthPaysAll(a){var cur=a.payments.filter(function(p){return(p.date||'').slice(0,7)===ui.month}).map(function(p){return p});var old=recs(a).filter(function(r){return r.kind==='Receipt'&&r.flat&&r.bookMonth===ui.month}).map(function(r){return oldPay(a,r)});return cur.concat(old).sort(function(x,y){return(y.date||y.bookMonth||'').localeCompare(x.date||x.bookMonth||'')})}
+var prevPH=vPaymentHistory;
+vPaymentHistory=function(){var a=apt();if(!recs(a).length)return prevPH();var list=monthPaysAll(a),h='<div><h3>Payments received - '+fmtMonth(ui.month)+'</h3>';if(!list.length)h+='<div class="empty">No payments this month.</div>';list.forEach(function(p){var f=p.old?{no:p.flatNo,owner:''}:flatOf(a,p.flatId);h+='<div class="item record"><div class="record-main"><div><b>Flat '+esc(f?f.no:'?')+'</b> '+esc(f?f.owner:'')+'<small>'+(p.date?fmtDate(p.date):'Date not written')+' &middot; <span class="tag">'+MODES[p.mode]+'</span>'+(p.receipt?' &middot; Rcpt '+esc(p.receipt):'')+(p.ref?' &middot; '+esc(p.ref):'')+(p.note?' &middot; '+esc(p.note):'')+'</small></div><div class="amt">'+(p.amount===null||p.amount===undefined?'Amount not written':inr(num(p.amount)))+'</div></div>'+(p.old?'':rowActions('editPay','deletePay',p.id,'payment')+'<div class="row-actions noprint"><button class="btn sm sec" data-act="receipt" data-id="'+p.id+'">Receipt</button></div>')+'</div>'});return h+'</div>'};
+var prevExp=vExp;
+vExp=function(){var a=apt();if(!recs(a).length)return prevExp();var cur=a.expenses.filter(function(e){return(e.date||'').slice(0,7)===ui.month}),old=recs(a).filter(function(r){return r.kind==='Expense'&&r.bookMonth===ui.month}).map(function(r){return{id:r.id,cat:r.description||'Expense',date:r.date||'',amount:r.amount,mode:(r.bank||/bank/i.test(r.mode||''))?'bank':'cash',note:r.note,old:true}}),list=cur.concat(old).sort(function(x,y){return(y.date||'').localeCompare(x.date||'')}),tot=0;list.forEach(function(e){tot+=num(e.amount)});var h='<div class="bar"><button class="btn" data-act="addExp">+ Record expense</button></div><div class="card"><h2>Expenses - '+fmtMonth(ui.month)+' ('+inr(tot)+')</h2>';if(!list.length)h+='<div class="empty">No expenses this month.</div>';list.forEach(function(e){h+='<div class="item record"><div class="record-main"><div><b>'+esc(e.cat)+'</b><small>'+(e.date?fmtDate(e.date):'Date not written')+' &middot; <span class="tag">'+(e.mode==='bank'?'Bank':e.pocketPaid?'Pocket-paid':'Cash')+'</span>'+(e.note?' &middot; '+esc(e.note):'')+'</small></div><div class="amt">'+(e.amount===null||e.amount===undefined?'Amount not written':inr(num(e.amount)))+'</div></div>'+(e.old?'':rowActions('editExp','deleteExp',e.id,'expense'))+'</div>'});return h+'</div>'};
+window.uniformVersion='1.0';
+})();
+</script>
 </body></html>
